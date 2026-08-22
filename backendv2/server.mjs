@@ -8,6 +8,8 @@ import { discoverUrlsForProduct } from './pipeline/orchestration/url_discovery.m
 import { processProductSanitization } from './pipeline/sanitizer.mjs';
 import { runExtractorAgent } from './pipeline/extractor/agent.mjs';
 import { runTaxonomyClassifierAgent } from './pipeline/classifier/agent.mjs';
+import { processAttributeTaxonomy } from './pipeline/attribute_taxonomy/agent.mjs';
+import { processNormalizer } from './pipeline/normalizer/agent.mjs';
 
 const app = express();
 app.use(cors());
@@ -97,7 +99,7 @@ async function executePipelineForProducts(insertedProducts) {
           AND canonical_product_id IS NULL 
           AND id IN (
             SELECT product_id FROM product_pipeline_runs 
-            WHERE stage = 'extractor' AND status IN ('done', 'skipped')
+            WHERE stage = 'normalizer' AND status IN ('done', 'skipped')
           )
         ORDER BY id DESC LIMIT 1
       `).get(normalizedSku, p.id);
@@ -114,6 +116,8 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit, use canonical
       }
@@ -157,6 +161,8 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit
         }
@@ -379,6 +385,40 @@ async function executePipelineForProducts(insertedProducts) {
         try {
             const product = db.prepare("SELECT * FROM products WHERE id = ?").get(p.product_id);
             await runTaxonomyClassifierAgent(product);
+            
+            // --- PHASE 5b: Attribute Taxonomy ---
+            const timeTax = new Date().toISOString();
+            db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'attribute_taxonomy', 'processing', ?, ?)").run(p.product_id, timeTax, timeTax);
+            
+            try {
+                const taxRes = await processAttributeTaxonomy(p.product_id, db);
+                const timeTaxDone = new Date().toISOString();
+                db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'attribute_taxonomy'").run(taxRes.status, JSON.stringify(taxRes), timeTaxDone, timeTaxDone, p.product_id);
+                
+                // --- PHASE 6: Normalizer ---
+                const timeNorm = new Date().toISOString();
+                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'normalizer', 'processing', ?, ?)").run(p.product_id, timeNorm, timeNorm);
+                
+                try {
+                    const normRes = await processNormalizer(p.product_id, db);
+                    const timeNormDone = new Date().toISOString();
+                    const finalNormStatus = normRes.status === 'no_attributes_available' ? 'skipped' : 'done';
+                    db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(finalNormStatus, JSON.stringify(normRes), timeNormDone, timeNormDone, p.product_id);
+                } catch (ne) {
+                    console.error(`[Orchestrator] Product ${p.product_id} Normalizer failed:`, ne);
+                    const timeNormFail = new Date().toISOString();
+                    db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(JSON.stringify({ error: ne.message }), timeNormFail, timeNormFail, p.product_id);
+                }
+                
+            } catch (e) {
+                console.error(`[Orchestrator] Product ${p.product_id} Attribute Taxonomy failed:`, e);
+                const timeTaxFail = new Date().toISOString();
+                db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'attribute_taxonomy'").run(JSON.stringify({ error: e.message }), timeTaxFail, timeTaxFail, p.product_id);
+                
+                const skipTime = new Date().toISOString();
+                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.product_id, skipTime, skipTime, skipTime);
+            }
+            
         } catch (err) {
             console.error('Classifier wrapper failed for product', p.product_id, err);
         }
@@ -417,7 +457,7 @@ app.get('/api/categories', (req, res) => {
       name: n.name,
       parent_id: n.parent_id,
       classpath: n.canonical_path,
-      required_attributes: []
+      required_attributes: db.prepare('SELECT attribute_name as name FROM taxonomy_attributes WHERE taxonomy_id = ?').all(n.id).map(a => a.name)
     }));
     res.json(categories);
   } catch (err) {
@@ -550,6 +590,34 @@ app.get('/api/products/:id', (req, res) => {
       } catch(e){}
   }
   
+  let product_attributes_json = null;
+  try {
+      const pAttrRows = db.prepare(`
+          SELECT pa.raw_value, pa.extracted_value, pa.provenance_json, pa.normalized_value, pa.normalization_status, pa.normalization_method,
+                 ta.attribute_name, ta.normalized_name,
+                 tav.value_text as taxonomy_value
+          FROM product_attribute_values pa
+          JOIN taxonomy_attributes ta ON pa.taxonomy_attribute_id = ta.id
+          LEFT JOIN taxonomy_attribute_values tav ON pa.taxonomy_attribute_value_id = tav.id
+          WHERE pa.product_id = ?
+      `).all(targetId);
+      if (pAttrRows && pAttrRows.length > 0) {
+          product_attributes_json = pAttrRows.map(pa => ({
+              attribute_name: pa.attribute_name,
+              normalized_name: pa.normalized_name,
+              value: pa.extracted_value,
+              normalized_value: pa.normalized_value,
+              normalization_status: pa.normalization_status,
+              normalization_method: pa.normalization_method,
+              raw_value: pa.raw_value,
+              taxonomy_value: pa.taxonomy_value,
+              provenance: pa.provenance_json ? JSON.parse(pa.provenance_json) : []
+          }));
+      }
+  } catch(e) {
+      console.error("Failed to load product attributes API", e);
+  }
+
   res.json({
     id: product.id,
     batch_id: product.import_batch_id,
@@ -558,6 +626,7 @@ app.get('/api/products/:id', (req, res) => {
     job_status: jobStatus,
     commerce_ready: false,
     overall_confidence: null,
+    product_attributes_json,
     confidence_scores: {
         extraction_confidence,
         classification_confidence,
@@ -571,6 +640,7 @@ app.get('/api/products/:id', (req, res) => {
     evidence_json: JSON.stringify(evidenceData),
     extractor_json: extractorJsonStr,
     classifier_json: (product.canonical_product_id ? db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.canonical_product_id) : db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.id))?.classification_json || null,
+    normalizer_json: targetRuns.find(r => r.stage === 'normalizer')?.output_json || null,
     error_message: runs.find(r => r.status === 'failed')?.error_json || null
   });
 });

@@ -56,11 +56,6 @@ export const sidebarData: SidebarData = {
           url: '/categories',
           icon: FileText,
         },
-        {
-          title: 'Taxonomy',
-          url: '/taxonomy',
-          icon: Activity,
-        },
       ],
     },
     {

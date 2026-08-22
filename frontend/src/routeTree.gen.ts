@@ -19,7 +19,6 @@ import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as LayoutCategoriesRouteImport } from './routes/_layout/categories'
 import { Route as LayoutExportRouteImport } from './routes/_layout/export'
 import { Route as LayoutLogsRouteImport } from './routes/_layout/logs'
-import { Route as LayoutTaxonomyRouteImport } from './routes/_layout/taxonomy'
 import { Route as LayoutUploadRouteImport } from './routes/_layout/upload'
 import { Route as LayoutErrorsErrorRouteImport } from './routes/_layout/errors/$error'
 import { Route as LayoutProductsIndexRouteImport } from './routes/_layout/products.index'
@@ -74,11 +73,6 @@ const LayoutLogsRoute = LayoutLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => LayoutRouteRoute,
 } as any)
-const LayoutTaxonomyRoute = LayoutTaxonomyRouteImport.update({
-  id: '/taxonomy',
-  path: '/taxonomy',
-  getParentRoute: () => LayoutRouteRoute,
-} as any)
 const LayoutUploadRoute = LayoutUploadRouteImport.update({
   id: '/upload',
   path: '/upload',
@@ -110,7 +104,6 @@ export interface FileRoutesByFullPath {
   '/categories': typeof LayoutCategoriesRoute
   '/export': typeof LayoutExportRoute
   '/logs': typeof LayoutLogsRoute
-  '/taxonomy': typeof LayoutTaxonomyRoute
   '/upload': typeof LayoutUploadRoute
   '/errors/$error': typeof LayoutErrorsErrorRoute
   '/products/$id': typeof LayoutProductsIdRoute
@@ -125,7 +118,6 @@ export interface FileRoutesByTo {
   '/categories': typeof LayoutCategoriesRoute
   '/export': typeof LayoutExportRoute
   '/logs': typeof LayoutLogsRoute
-  '/taxonomy': typeof LayoutTaxonomyRoute
   '/upload': typeof LayoutUploadRoute
   '/': typeof LayoutIndexRoute
   '/errors/$error': typeof LayoutErrorsErrorRoute
@@ -143,7 +135,6 @@ export interface FileRoutesById {
   '/_layout/categories': typeof LayoutCategoriesRoute
   '/_layout/export': typeof LayoutExportRoute
   '/_layout/logs': typeof LayoutLogsRoute
-  '/_layout/taxonomy': typeof LayoutTaxonomyRoute
   '/_layout/upload': typeof LayoutUploadRoute
   '/_layout/': typeof LayoutIndexRoute
   '/_layout/errors/$error': typeof LayoutErrorsErrorRoute
@@ -162,7 +153,6 @@ export interface FileRouteTypes {
     | '/categories'
     | '/export'
     | '/logs'
-    | '/taxonomy'
     | '/upload'
     | '/errors/$error'
     | '/products/$id'
@@ -177,7 +167,6 @@ export interface FileRouteTypes {
     | '/categories'
     | '/export'
     | '/logs'
-    | '/taxonomy'
     | '/upload'
     | '/'
     | '/errors/$error'
@@ -194,7 +183,6 @@ export interface FileRouteTypes {
     | '/_layout/categories'
     | '/_layout/export'
     | '/_layout/logs'
-    | '/_layout/taxonomy'
     | '/_layout/upload'
     | '/_layout/'
     | '/_layout/errors/$error'
@@ -283,13 +271,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutLogsRouteImport
       parentRoute: typeof LayoutRouteRoute
     }
-    '/_layout/taxonomy': {
-      id: '/_layout/taxonomy'
-      path: '/taxonomy'
-      fullPath: '/taxonomy'
-      preLoaderRoute: typeof LayoutTaxonomyRouteImport
-      parentRoute: typeof LayoutRouteRoute
-    }
     '/_layout/upload': {
       id: '/_layout/upload'
       path: '/upload'
@@ -325,7 +306,6 @@ interface LayoutRouteRouteChildren {
   LayoutCategoriesRoute: typeof LayoutCategoriesRoute
   LayoutExportRoute: typeof LayoutExportRoute
   LayoutLogsRoute: typeof LayoutLogsRoute
-  LayoutTaxonomyRoute: typeof LayoutTaxonomyRoute
   LayoutUploadRoute: typeof LayoutUploadRoute
   LayoutIndexRoute: typeof LayoutIndexRoute
   LayoutErrorsErrorRoute: typeof LayoutErrorsErrorRoute
@@ -337,7 +317,6 @@ const LayoutRouteRouteChildren: LayoutRouteRouteChildren = {
   LayoutCategoriesRoute: LayoutCategoriesRoute,
   LayoutExportRoute: LayoutExportRoute,
   LayoutLogsRoute: LayoutLogsRoute,
-  LayoutTaxonomyRoute: LayoutTaxonomyRoute,
   LayoutUploadRoute: LayoutUploadRoute,
   LayoutIndexRoute: LayoutIndexRoute,
   LayoutErrorsErrorRoute: LayoutErrorsErrorRoute,

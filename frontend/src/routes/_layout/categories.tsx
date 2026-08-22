@@ -157,7 +157,7 @@ function CategoriesPage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Categories</h1>
             <p className="text-muted-foreground">
-              Hierarchical view of product categories and their required attributes.
+              Hierarchical view of product categories and their observed attributes.
             </p>
           </div>
 
@@ -200,7 +200,7 @@ function CategoriesPage() {
                     {selectedNode.classpath}
                   </div>
 
-                  <h3 className="text-lg font-medium mb-4">Required Attributes</h3>
+                  <h3 className="text-lg font-medium mb-4">Observed Attributes</h3>
                   {selectedNode.required_attributes?.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {selectedNode.required_attributes.map((attr, idx) => {
@@ -239,7 +239,7 @@ function CategoriesPage() {
                     </div>
                   ) : (
                     <div className="text-muted-foreground">
-                      No required attributes defined for this category.
+                      No observed attributes found for this category.
                     </div>
                   )}
                 </div>

@@ -1,22 +1,64 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useParams } from '@tanstack/react-router'
-import { AlertCircle, RefreshCw } from 'lucide-react'
-import { fetchProductDetail, retryProduct } from '@/lib/api'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
-import { ConfidenceBadge } from '@/components/custom/ConfidenceBadge'
-import { ConflictCard } from '@/components/custom/ConflictCard'
-import { DiffView } from '@/components/custom/DiffView'
-import { ExplainabilityDrawer } from '@/components/custom/ExplainabilityDrawer'
-import { PipelineProgress } from '@/components/custom/PipelineProgress'
-import { Header } from '@/components/layout/header'
-import { Main } from '@/components/layout/main'
-import { ProfileDropdown } from '@/components/profile-dropdown'
-import { Search } from '@/components/search'
-import { ThemeSwitch } from '@/components/theme-switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
+import { AlertCircle, RefreshCw } from 'lucide-react';
+import { fetchProductDetail, retryProduct } from '@/lib/api';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ConfidenceBadge } from '@/components/custom/ConfidenceBadge';
+import { ConflictCard } from '@/components/custom/ConflictCard';
+import { DiffView } from '@/components/custom/DiffView';
+import { ExplainabilityDrawer } from '@/components/custom/ExplainabilityDrawer';
+import { PipelineProgress } from '@/components/custom/PipelineProgress';
+import { Header } from '@/components/layout/header';
+import { Main } from '@/components/layout/main';
+import { ProfileDropdown } from '@/components/profile-dropdown';
+import { Search } from '@/components/search';
+import { ThemeSwitch } from '@/components/theme-switch';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function formatSafeJson(text: string) {
   if (!text) return ''
@@ -101,7 +143,11 @@ export function ProductDetail() {
                   {/* Status badge */}
                   <Badge
                     variant={
-                      isDone ? 'default' : isFailed ? 'destructive' : 'secondary'
+                      isDone
+                        ? 'default'
+                        : isFailed
+                          ? 'destructive'
+                          : 'secondary'
                     }
                   >
                     {status}
@@ -139,7 +185,11 @@ export function ProductDetail() {
                   <RefreshCw
                     className={`mr-2 h-4 w-4 ${retryMutation.isPending ? 'animate-spin' : ''}`}
                   />
-                  {retryMutation.isPending ? 'Queuing…' : isFailed ? 'Retry Pipeline' : 'Re-enrich'}
+                  {retryMutation.isPending
+                    ? 'Queuing…'
+                    : isFailed
+                      ? 'Retry Pipeline'
+                      : 'Re-enrich'}
                 </Button>
                 <ExplainabilityDrawer product={product} />
               </div>
@@ -164,18 +214,38 @@ export function ProductDetail() {
 
             {/* ── Enriched output — only when pipeline finished ── */}
             {isDone && (
-              <Tabs defaultValue="output" className="w-full mt-6">
-                <TabsList className="flex w-full flex-wrap gap-2 mb-6 h-auto p-1 bg-muted rounded-md justify-start">
-                  <TabsTrigger className="flex-1" value="output">Enriched Output</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="input">Input JSON</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="orchestration">Orchestration JSON</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="crawler">Crawler JSON</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="evidence">Evidence JSON</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="extractor">Extractor JSON</TabsTrigger>
-                  <TabsTrigger className="flex-1" value="classifier">Classifier JSON</TabsTrigger>
+              <Tabs defaultValue='output' className='mt-6 w-full'>
+                <TabsList className='mb-6 flex h-auto w-full flex-wrap justify-start gap-2 rounded-md bg-muted p-1'>
+                  <TabsTrigger className='flex-1' value='output'>
+                    Enriched Output
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='input'>
+                    Input JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='orchestration'>
+                    Orchestration JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='crawler'>
+                    Crawler JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='evidence'>
+                    Evidence JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='extractor'>
+                    Extractor JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='classifier'>
+                    Classifier JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='product_attributes'>
+                    Attributes JSON
+                  </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='normalizer'>
+                    Normalizer JSON
+                  </TabsTrigger>
                 </TabsList>
-                
-                <TabsContent value="output">
+
+                <TabsContent value='output'>
                   <div className='grid gap-6 xl:grid-cols-3'>
                     <div className='xl:col-span-2'>
                       <DiffView
@@ -188,11 +258,16 @@ export function ProductDetail() {
                     </div>
 
                     <div className='space-y-4'>
-                      <h2 className='text-xl font-semibold'>Validation Conflicts</h2>
-                      {product.validation_issues && product.validation_issues.length > 0 ? (
-                        product.validation_issues.map((issue: unknown, idx: number) => (
-                          <ConflictCard key={idx} conflict={issue} />
-                        ))
+                      <h2 className='text-xl font-semibold'>
+                        Validation Conflicts
+                      </h2>
+                      {product.validation_issues &&
+                      product.validation_issues.length > 0 ? (
+                        product.validation_issues.map(
+                          (issue: unknown, idx: number) => (
+                            <ConflictCard key={idx} conflict={issue} />
+                          )
+                        )
                       ) : (
                         <div className='rounded-md border bg-muted p-4 text-sm text-muted-foreground'>
                           No validation conflicts found.
@@ -202,59 +277,79 @@ export function ProductDetail() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="input">
-                  <div className="rounded-md border bg-muted p-4">
-                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
-                      {product.input_json 
+                <TabsContent value='input'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.input_json
                         ? formatSafeJson(product.input_json)
-                        : "No input JSON available."}
+                        : 'No input JSON available.'}
                     </pre>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="orchestration">
-                  <div className="rounded-md border bg-muted p-4">
-                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
-                      {product.orchestration_json 
+                <TabsContent value='orchestration'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.orchestration_json
                         ? formatSafeJson(product.orchestration_json)
-                        : "No orchestration JSON available (pipeline may still be running)."}
+                        : 'No orchestration JSON available (pipeline may still be running).'}
                     </pre>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="crawler">
-                  <div className="rounded-md border bg-muted p-4">
-                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
-                      {product.crawler_json 
+                <TabsContent value='crawler'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.crawler_json
                         ? formatSafeJson(product.crawler_json)
-                        : "No crawler JSON available (pipeline may still be running or crawler skipped)."}
+                        : 'No crawler JSON available (pipeline may still be running or crawler skipped).'}
                     </pre>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="evidence">
-                  <div className="rounded-md border bg-muted p-4">
-                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
-                      {product.evidence_json 
+                <TabsContent value='evidence'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.evidence_json
                         ? formatSafeJson(product.evidence_json)
-                        : "No sanitized evidence JSON available (pipeline may still be running)."}
+                        : 'No sanitized evidence JSON available (pipeline may still be running).'}
                     </pre>
                   </div>
                 </TabsContent>
 
-                <TabsContent value="extractor">
-                  <div className="rounded-md border bg-muted p-4">
-                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
-                      {product.extractor_json 
+                <TabsContent value='extractor'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.extractor_json
                         ? formatSafeJson(product.extractor_json)
-                        : "No extractor JSON available (pipeline may still be running or extractor failed)."}
+                        : 'No extractor JSON available (pipeline may still be running or extractor failed).'}
                     </pre>
                   </div>
                 </TabsContent>
-                <TabsContent value="classifier">
-                  <div className='rounded-md bg-zinc-950 p-4'>
-                    <pre className='text-sm text-zinc-50 overflow-auto whitespace-pre-wrap'>
-                      {product.classifier_json ? JSON.stringify(JSON.parse(product.classifier_json), null, 2) : 'No classification data available'}
+                <TabsContent value='classifier'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.classifier_json
+                        ? formatSafeJson(product.classifier_json)
+                        : 'No classification JSON available (pipeline may still be running or extractor failed).'}
+                    </pre>
+                  </div>
+                </TabsContent>
+                <TabsContent value='product_attributes'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.product_attributes_json
+                        ? JSON.stringify(product.product_attributes_json, null, 2)
+                        : 'No attributes available.'}
+                    </pre>
+                  </div>
+                </TabsContent>
+                <TabsContent value='normalizer'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.normalizer_json
+                        ? formatSafeJson(product.normalizer_json)
+                        : 'No normalizer JSON available.'}
                     </pre>
                   </div>
                 </TabsContent>
