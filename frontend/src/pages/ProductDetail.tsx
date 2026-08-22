@@ -243,6 +243,9 @@ export function ProductDetail() {
                   <TabsTrigger className='flex-1' value='normalizer'>
                     Normalizer JSON
                   </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='writer'>
+                    Writer JSON
+                  </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value='output'>
@@ -350,6 +353,15 @@ export function ProductDetail() {
                       {product.normalizer_json
                         ? formatSafeJson(product.normalizer_json)
                         : 'No normalizer JSON available.'}
+                    </pre>
+                  </div>
+                </TabsContent>
+                <TabsContent value='writer'>
+                  <div className='rounded-md border bg-muted p-4'>
+                    <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
+                      {product.writer_json
+                        ? formatSafeJson(product.writer_json)
+                        : 'No writer JSON available. Run re-enrich to generate descriptions.'}
                     </pre>
                   </div>
                 </TabsContent>

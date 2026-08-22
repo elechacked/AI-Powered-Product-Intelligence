@@ -10,6 +10,7 @@ import { runExtractorAgent } from './pipeline/extractor/agent.mjs';
 import { runTaxonomyClassifierAgent } from './pipeline/classifier/agent.mjs';
 import { processAttributeTaxonomy } from './pipeline/attribute_taxonomy/agent.mjs';
 import { processNormalizer } from './pipeline/normalizer/agent.mjs';
+import { processWriter } from './pipeline/writer/agent.mjs';
 
 const app = express();
 app.use(cors());
@@ -118,6 +119,7 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit, use canonical
       }
@@ -163,6 +165,7 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit
         }
@@ -404,10 +407,26 @@ async function executePipelineForProducts(insertedProducts) {
                     const timeNormDone = new Date().toISOString();
                     const finalNormStatus = normRes.status === 'no_attributes_available' ? 'skipped' : 'done';
                     db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(finalNormStatus, JSON.stringify(normRes), timeNormDone, timeNormDone, p.product_id);
+
+                    // --- PHASE 7: Writer ---
+                    const timeWriter = new Date().toISOString();
+                    db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'writer', 'processing', ?, ?)").run(p.product_id, timeWriter, timeWriter);
+                    try {
+                        const writerRes = await processWriter(p.product_id, db);
+                        const timeWriterDone = new Date().toISOString();
+                        const wStatus = (writerRes.status === 'skipped' || writerRes.status === 'reused') ? writerRes.status : 'done';
+                        db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(wStatus, JSON.stringify(writerRes), timeWriterDone, timeWriterDone, p.product_id);
+                    } catch (we) {
+                        console.error(`[Orchestrator] Product ${p.product_id} Writer failed:`, we);
+                        const timeWriterFail = new Date().toISOString();
+                        db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(JSON.stringify({ error: we.message }), timeWriterFail, timeWriterFail, p.product_id);
+                    }
                 } catch (ne) {
                     console.error(`[Orchestrator] Product ${p.product_id} Normalizer failed:`, ne);
                     const timeNormFail = new Date().toISOString();
                     db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(JSON.stringify({ error: ne.message }), timeNormFail, timeNormFail, p.product_id);
+                    const skipWriterTime = new Date().toISOString();
+                    db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.product_id, skipWriterTime, skipWriterTime, skipWriterTime);
                 }
                 
             } catch (e) {
@@ -417,6 +436,7 @@ async function executePipelineForProducts(insertedProducts) {
                 
                 const skipTime = new Date().toISOString();
                 db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.product_id, skipTime, skipTime, skipTime);
+                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.product_id, skipTime, skipTime, skipTime);
             }
             
         } catch (err) {
@@ -641,6 +661,12 @@ app.get('/api/products/:id', (req, res) => {
     extractor_json: extractorJsonStr,
     classifier_json: (product.canonical_product_id ? db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.canonical_product_id) : db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.id))?.classification_json || null,
     normalizer_json: targetRuns.find(r => r.stage === 'normalizer')?.output_json || null,
+    writer_json: (() => {
+      try {
+        const wd = db.prepare('SELECT * FROM product_descriptions WHERE product_id = ?').get(targetId);
+        return wd ? JSON.stringify(wd) : (targetRuns.find(r => r.stage === 'writer')?.output_json || null);
+      } catch(e) { return null; }
+    })(),
     error_message: runs.find(r => r.status === 'failed')?.error_json || null
   });
 });
