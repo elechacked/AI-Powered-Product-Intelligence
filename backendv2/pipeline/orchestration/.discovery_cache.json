@@ -1,0 +1,32 @@
+{
+  "domains": {
+    "jam industrial supply llc": {
+      "official_domain": "jamindustrialsupply.com",
+      "status": "success",
+      "resolved_at": "2026-08-22T12:24:53.383Z",
+      "source": "live_search"
+    },
+    "3m": {
+      "official_domain": "3m.com",
+      "status": "success",
+      "resolved_at": "2026-08-22T12:24:56.086Z",
+      "source": "live_search"
+    }
+  },
+  "products": {
+    "jamindustrialsupply.com::3mabr-7100075678": {
+      "product_url": "https://www.jamindustrialsupply.com/product/3m-cubitron-ii-stikit-film-disc-775l-150-5-in-x-nh-linered-w-tab-die-500x/?srsltid=AfmBOorQs3ywTH1mkEMD4TV-dRtG4KoJc7ErA21Gj_4qxazq-hBPGNSu",
+      "sku_match_status": "exact",
+      "url_status": "success",
+      "checked_at": "2026-08-22T12:24:54.837Z",
+      "source": "live_search"
+    },
+    "3m.com::3mabr-7100075678": {
+      "product_url": null,
+      "sku_match_status": "no_match",
+      "url_status": "not_found",
+      "checked_at": "2026-08-22T12:24:57.150Z",
+      "source": "live_search"
+    }
+  }
+}

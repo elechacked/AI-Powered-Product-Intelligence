@@ -1,0 +1,29 @@
+{
+    "name": "the-crawler-actor",
+    "version": "0.5.8",
+    "description": "TheCrawler — Apify actor wrapper around the standalone `thecrawler` npm package. All scraping logic lives in the standalone engine; this is a thin charging + dataset-push shell. Version mirrors the engine version (0.3.3) it imports.",
+    "type": "module",
+    "main": "dist/main.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/main.js",
+        "test:discovery": "node --env-file=.env pipeline/orchestration/test_url_discovery_3m.mjs"
+    },
+    "dependencies": {
+        "apify": "^3.2.2",
+        "better-sqlite3": "^13.0.3",
+        "cors": "^2.8.6",
+        "duck-duck-scrape": "^2.2.7",
+        "express": "^5.2.1",
+        "google-it": "^1.6.4",
+        "multer": "^2.2.0",
+        "thecrawler": "file:thecrawler-0.5.8.tgz"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.4.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    }
+}

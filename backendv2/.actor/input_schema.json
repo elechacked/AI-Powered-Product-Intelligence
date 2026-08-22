@@ -1,0 +1,376 @@
+{
+    "title": "TheCrawler Input",
+    "description": "Crawl pages, run LLM extraction, or diagnose whether URLs are ready for a validated extraction contract.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "urls": {
+            "title": "URLs to Scrape",
+            "type": "array",
+            "description": "List of URLs to scrape.",
+            "editor": "stringList",
+            "items": { "type": "string" },
+            "prefill": ["https://example.com"]
+        },
+        "extractText": {
+            "title": "Extract Text",
+            "type": "boolean",
+            "description": "Extract visible text content (scripts/styles removed).",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractLinks": {
+            "title": "Extract Links",
+            "type": "boolean",
+            "description": "Extract all links with href, anchor text, and internal/external flag.",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractImages": {
+            "title": "Extract Images",
+            "type": "boolean",
+            "description": "Extract all images with src, alt text, dimensions.",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractMeta": {
+            "title": "Extract Meta Tags",
+            "type": "boolean",
+            "description": "Extract all meta tags (description, og:title, keywords, etc).",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractHeadings": {
+            "title": "Extract Headings",
+            "type": "boolean",
+            "description": "Extract all h1-h6 headings with their level.",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractTables": {
+            "title": "Extract Tables",
+            "type": "boolean",
+            "description": "Extract HTML tables as structured data (headers + rows).",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractStructuredData": {
+            "title": "Extract JSON-LD",
+            "type": "boolean",
+            "description": "Extract JSON-LD structured data (schema.org).",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "extractBrand": {
+            "title": "Extract Brand Identity (palette, theme color, logo)",
+            "type": "boolean",
+            "description": "Extract brand colors (ranked palette + themeColor) and logo candidates. Reads <meta theme-color>, CSS variables, inline/<style>/linked-stylesheet colors, and — with JS Rendering (Playwright) enabled — the rendered computed colors of header/nav/buttons (most accurate, works on SPAs). Adds palette[], themeColor, and logo[] to each result.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "onlyMainContent": {
+            "title": "Only Main Content",
+            "type": "boolean",
+            "description": "Restrict text/markdown/links/html output to the main content (drops nav, header, footer, sidebar, cookie banners). Firecrawl-compatible.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "includeTags": {
+            "title": "Include Tags (CSS selectors)",
+            "type": "array",
+            "description": "Keep ONLY elements matching these CSS selectors in content output. Example: article, .post-body",
+            "editor": "stringList",
+            "items": { "type": "string" }
+        },
+        "excludeTags": {
+            "title": "Exclude Tags (CSS selectors)",
+            "type": "array",
+            "description": "Remove elements matching these CSS selectors from content output. Example: nav, footer, .ads",
+            "editor": "stringList",
+            "items": { "type": "string" }
+        },
+        "extractHtml": {
+            "title": "Extract HTML",
+            "type": "boolean",
+            "description": "Include processed/cleaned HTML in output (html field).",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "extractRawHtml": {
+            "title": "Extract Raw HTML",
+            "type": "boolean",
+            "description": "Include the raw, unprocessed serialized HTML in output (rawHtml field).",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "waitFor": {
+            "title": "Wait For (ms)",
+            "type": "integer",
+            "description": "Firecrawl-compatible alias for Wait (ms). Milliseconds to wait after load before extracting (Playwright only).",
+            "minimum": 0,
+            "maximum": 30000,
+            "editor": "number"
+        },
+        "extractEmails": {
+            "title": "Extract Email-like Text",
+            "type": "boolean",
+            "description": "Find email-like strings in public page HTML. Leave off unless your workflow is allowed to process contact fields.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "extractPhones": {
+            "title": "Extract Phone-like Text",
+            "type": "boolean",
+            "description": "Find phone-like strings in public page HTML. Leave off unless your workflow is allowed to process contact fields.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "cssSelector": {
+            "title": "CSS Selector",
+            "type": "string",
+            "description": "Target specific content. Returns matching text in selectedContent field. Example: .product-price, #main-content, article",
+            "editor": "textfield"
+        },
+        "maxDepth": {
+            "title": "Crawl Depth",
+            "type": "integer",
+            "description": "0 = scrape listed URLs only. 1+ = follow internal links to that depth.",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 5,
+            "editor": "number"
+        },
+        "maxPages": {
+            "title": "Max Pages",
+            "type": "integer",
+            "description": "Maximum total pages to scrape (including followed links).",
+            "default": 100,
+            "minimum": 1,
+            "maximum": 10000,
+            "editor": "number"
+        },
+        "usePlaywright": {
+            "title": "Enable JS Rendering (Playwright)",
+            "type": "boolean",
+            "description": "Render JavaScript with a real browser. Required for SPAs (React, Vue, Angular), dynamic content, and sites that load data via JS. Uses more compute than default Cheerio mode.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "waitForSelector": {
+            "title": "Wait for Selector",
+            "type": "string",
+            "description": "CSS selector to wait for before extracting. Only works with Playwright enabled. Example: .product-list, #content-loaded",
+            "editor": "textfield"
+        },
+        "waitForMs": {
+            "title": "Wait (ms)",
+            "type": "integer",
+            "description": "Milliseconds to wait after page load before extracting. Only works with Playwright enabled. Useful for lazy-loading content.",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 30000,
+            "editor": "number"
+        },
+        "extractMarkdown": {
+            "title": "Extract Markdown",
+            "type": "boolean",
+            "description": "Convert page content to clean Markdown. Strips navigation, footers, and boilerplate when stripBoilerplate is enabled. Ideal for LLM/RAG pipelines.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "stripBoilerplate": {
+            "title": "Strip Boilerplate",
+            "type": "boolean",
+            "description": "Remove nav, header, footer, sidebar, and ads before markdown conversion. Keeps only main content.",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "chunkSize": {
+            "title": "Chunk Size (chars)",
+            "type": "integer",
+            "description": "Split markdown into chunks of this size. Each chunk includes section heading, index, and content hash. Set to 0 to disable chunking.",
+            "default": 0,
+            "minimum": 0,
+            "maximum": 50000,
+            "editor": "number"
+        },
+        "chunkOverlap": {
+            "title": "Chunk Overlap (chars)",
+            "type": "integer",
+            "description": "Character overlap between consecutive chunks. Prevents losing context at chunk boundaries. Typical: 10-20% of chunk size.",
+            "default": 200,
+            "minimum": 0,
+            "maximum": 5000,
+            "editor": "number"
+        },
+        "includeGlobs": {
+            "title": "Include URL Patterns",
+            "type": "array",
+            "description": "Only follow links matching these glob patterns when crawling. Example: https://example.com/blog/**",
+            "editor": "stringList",
+            "items": { "type": "string" }
+        },
+        "excludeGlobs": {
+            "title": "Exclude URL Patterns",
+            "type": "array",
+            "description": "Skip links matching these glob patterns. Example: **/login/**, **/admin/**",
+            "editor": "stringList",
+            "items": { "type": "string" }
+        },
+        "proxyUrl": {
+            "title": "Proxy URL",
+            "type": "string",
+            "description": "HTTP/SOCKS proxy URL for requests. Format: http://user:pass@host:port or socks5://user:pass@host:port. Use Apify Proxy or your own.",
+            "editor": "textfield"
+        },
+        "searchQuery": {
+            "title": "Search Query",
+            "type": "string",
+            "description": "Search Google and scrape the top results. Leave URLs empty to use search mode. Example: 'best project management tools 2026'",
+            "editor": "textfield"
+        },
+        "searchLimit": {
+            "title": "Search Results Limit",
+            "type": "integer",
+            "description": "Maximum number of search results to scrape (default: 10).",
+            "default": 10,
+            "minimum": 1,
+            "maximum": 50,
+            "editor": "number"
+        },
+        "actions": {
+            "title": "Browser Actions (Playwright only)",
+            "type": "array",
+            "description": "Actions to perform before extraction. Requires Playwright enabled. JSON array. Types: click (selector), fill (selector + value), scroll (pixels), wait (ms), screenshot. Example: [{\"type\":\"click\",\"selector\":\".load-more\"},{\"type\":\"scroll\",\"pixels\":2000}]",
+            "editor": "json"
+        },
+        "dryRun": {
+            "title": "Dry Run",
+            "type": "boolean",
+            "description": "Use this for your first test run. The actor crawls pages but does not emit an Apify billing event.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "requestRetries": {
+            "title": "Request Retries",
+            "type": "integer",
+            "description": "Retry transient failures (5xx, network, timeout) this many times before marking the page failed. Permanent failures (404, parse) are not retried.",
+            "default": 3,
+            "minimum": 0,
+            "maximum": 10,
+            "editor": "number",
+            "sectionCaption": "Reliability"
+        },
+        "requestTimeoutSecs": {
+            "title": "Request Timeout (seconds)",
+            "type": "integer",
+            "description": "Per-request timeout in seconds.",
+            "default": 30,
+            "minimum": 5,
+            "maximum": 300,
+            "editor": "number"
+        },
+        "rotateUserAgent": {
+            "title": "Rotate User-Agent",
+            "type": "boolean",
+            "description": "Rotate among standard browser User-Agent strings for compatibility with sites that treat missing or unusual user agents differently. This does not override access controls.",
+            "default": true,
+            "editor": "checkbox"
+        },
+        "cacheEnabled": {
+            "title": "Cache Results (5min TTL)",
+            "type": "boolean",
+            "description": "Cache page results in-memory keyed by (URL + extract-flags). Same URL within 5 minutes returns cached data with fromCache:true. Useful when the same URLs may appear multiple times in one run (e.g., recursive crawl with shared external pages).",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "diagnoseMode": {
+            "title": "Diagnostic Mode (no LLM)",
+            "type": "boolean",
+            "description": "Run a contract-readiness diagnostic before LLM extraction. The actor crawls each URL, scores source readiness, and returns verdicts, blockers, warnings, and a recommended next step. Requires urls[].",
+            "default": false,
+            "editor": "checkbox",
+            "sectionCaption": "Validated Extraction Contracts"
+        },
+        "extractContract": {
+            "title": "Extraction Contract",
+            "type": "string",
+            "description": "Built-in contract name for diagnostic or extract mode. Options: real-estate-listing, product-page, docs-page, brand-context. In extractMode this supplies the schema and validation rules; in diagnoseMode it supplies the readiness signals.",
+            "default": "real-estate-listing",
+            "editor": "select",
+            "enum": ["real-estate-listing", "product-page", "docs-page", "brand-context"],
+            "enumTitles": ["Real Estate Listing", "Product Page", "Docs Page", "Brand Context"]
+        },
+        "diagnosticReport": {
+            "title": "Save Diagnostic Report",
+            "type": "boolean",
+            "description": "When diagnoseMode=true, also save a buyer-readable Markdown report to the run's key-value store as contract-diagnostic-report.",
+            "default": false,
+            "editor": "checkbox"
+        },
+        "extractMode": {
+            "title": "Extract Mode (LLM-powered structured extraction)",
+            "type": "boolean",
+            "description": "Switch from plain crawl to LLM-powered structured extraction. The actor crawls each URL, cleans to markdown, and asks an OpenAI-compatible LLM to return ONLY a JSON object matching your schema/prompt or the selected extraction contract. Output is parsed typed data per URL; contract mode also adds validation.valid and missingRequiredFields. Requires llmBaseUrl + llmModel (or matching Actor environment variables).",
+            "default": false,
+            "editor": "checkbox",
+            "sectionCaption": "LLM-Powered Structured Extraction (Beta)"
+        },
+        "extractJsonSchema": {
+            "title": "Extract: JSON Schema",
+            "type": "object",
+            "description": "JSON Schema describing the desired typed output. The LLM is instructed to return JSON matching this. Either this or extractPrompt is required when extractMode=true. Example: {\"type\":\"object\",\"properties\":{\"productName\":{\"type\":\"string\"},\"price\":{\"type\":\"number\"}},\"required\":[\"productName\"]}",
+            "editor": "json"
+        },
+        "extractPrompt": {
+            "title": "Extract: Natural-language Instruction",
+            "type": "string",
+            "description": "Natural-language extraction instruction (e.g., 'Extract the product name, price, currency, availability'). Used alongside or instead of the JSON schema.",
+            "editor": "textarea"
+        },
+        "groundToSource": {
+            "title": "Extract: Ground To Source (anti-hallucination)",
+            "type": "boolean",
+            "description": "When true, every extracted leaf value is verified against the page text the model actually saw; any value that can't be traced to the page is set to null and listed in nulledFields. Catches invented values. Default false.",
+            "default": false
+        },
+        "llmBaseUrl": {
+            "title": "LLM Endpoint URL",
+            "type": "string",
+            "description": "OpenAI-compatible chat-completions URL. Examples: https://api.openai.com/v1/chat/completions, http://your-llm-host:8080/v1/chat/completions. If left blank, the actor reads THECRAWLER_LLM_BASEURL from the Actor environment variables.",
+            "editor": "textfield"
+        },
+        "llmModel": {
+            "title": "LLM Model",
+            "type": "string",
+            "description": "Model name string the endpoint expects (e.g., gpt-4o-mini, or a .gguf filename for llama.cpp). If blank, reads THECRAWLER_LLM_MODEL env var. The LLM API key (if any) is read from THECRAWLER_LLM_API_KEY Actor env var, never from input — keeps secrets out of run history.",
+            "editor": "textfield"
+        },
+        "llmTemperature": {
+            "title": "LLM Temperature",
+            "type": "string",
+            "description": "Inference temperature as a decimal string ('0', '0.7', '1.0'). 0 is recommended for deterministic extraction. (String editor used because Apify input fields don't natively support floats with custom precision.)",
+            "default": "0",
+            "editor": "textfield"
+        },
+        "llmMaxTokens": {
+            "title": "LLM Max Output Tokens",
+            "type": "integer",
+            "description": "Maximum tokens the LLM may return in the JSON response.",
+            "default": 4000,
+            "minimum": 100,
+            "maximum": 32000,
+            "editor": "number"
+        },
+        "llmMarkdownCharLimit": {
+            "title": "Markdown Character Limit Sent to LLM",
+            "type": "integer",
+            "description": "How much of the page markdown to send to the LLM. Default 30000 chars (≈7.5k tokens). Bigger = more context but slower and more $$ on hosted APIs.",
+            "default": 30000,
+            "minimum": 1000,
+            "maximum": 200000,
+            "editor": "number"
+        }
+    },
+    "required": ["urls"]
+}
