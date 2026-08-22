@@ -782,26 +782,21 @@ app.get('/api/stats/batches', (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/export', (req, res) => {
+app.get('/api/export', async (req, res) => {
   const batchId = req.query.batch_id;
-  let query = 'SELECT * FROM products';
-  const params = [];
-  
-  if (batchId) {
-    query += ' WHERE import_batch_id = ?';
-    params.push(batchId);
+  const productId = req.query.product_id;
+  const confidenceThreshold = req.query.confidence_threshold;
+  try {
+    const { generateExport } = await import('./pipeline/export/service.mjs');
+    const csvContent = generateExport(db, batchId, productId, confidenceThreshold);
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="export.csv"');
+    res.send(csvContent);
+  } catch (error) {
+    console.error('Export Error:', error);
+    res.status(500).json({ error: error.message });
   }
-  
-  const products = db.prepare(query).all(...params);
-  
-  const csvRows = ['Mfg_Part_Num,Part_Desc,Job_Status'];
-  for (const p of products) {
-    csvRows.push(`${p.mfg_part_num},"${p.part_desc.replace(/"/g, '""')}","done"`);
-  }
-  
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename="export.csv"');
-  res.send(csvRows.join('\n'));
 });
 
 app.listen(8000, () => {

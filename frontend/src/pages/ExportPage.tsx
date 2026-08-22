@@ -39,8 +39,18 @@ export function ExportPage() {
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
-    } catch (_error) {
-      setExportError('Failed to export. Please try again.')
+    } catch (error: any) {
+      let msg = 'Failed to export. Please try again.';
+      if (error.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          const parsed = JSON.parse(text);
+          if (parsed.error) msg = parsed.error;
+        } catch (e) {
+          // fallback
+        }
+      }
+      setExportError(msg);
     } finally {
       setIsExporting(false)
     }
