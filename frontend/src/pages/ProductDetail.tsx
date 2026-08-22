@@ -165,10 +165,12 @@ export function ProductDetail() {
             {/* ── Enriched output — only when pipeline finished ── */}
             {isDone && (
               <Tabs defaultValue="output" className="w-full mt-6">
-                <TabsList className="grid w-full grid-cols-3 mb-6">
+                <TabsList className="grid w-full grid-cols-5 mb-6">
                   <TabsTrigger value="output">Enriched Output</TabsTrigger>
                   <TabsTrigger value="input">Input JSON</TabsTrigger>
                   <TabsTrigger value="orchestration">Orchestration JSON</TabsTrigger>
+                  <TabsTrigger value="crawler">Crawler JSON</TabsTrigger>
+                  <TabsTrigger value="evidence">Evidence JSON</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="output">
@@ -214,6 +216,26 @@ export function ProductDetail() {
                       {product.orchestration_json 
                         ? formatSafeJson(product.orchestration_json)
                         : "No orchestration JSON available (pipeline may still be running)."}
+                    </pre>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="crawler">
+                  <div className="rounded-md border bg-muted p-4">
+                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
+                      {product.crawler_json 
+                        ? formatSafeJson(product.crawler_json)
+                        : "No crawler JSON available (pipeline may still be running or crawler skipped)."}
+                    </pre>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="evidence">
+                  <div className="rounded-md border bg-muted p-4">
+                    <pre className="text-xs overflow-auto max-h-[600px] text-muted-foreground whitespace-pre-wrap">
+                      {product.evidence_json 
+                        ? formatSafeJson(product.evidence_json)
+                        : "No sanitized evidence JSON available (pipeline may still be running)."}
                     </pre>
                   </div>
                 </TabsContent>

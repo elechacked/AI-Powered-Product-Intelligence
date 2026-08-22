@@ -64,4 +64,42 @@ db.exec(`
     updated_at TEXT,
     FOREIGN KEY(product_id) REFERENCES products(id)
   );
+
+  CREATE TABLE IF NOT EXISTS product_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id INTEGER,
+    source_name TEXT,
+    source_role TEXT,
+    source_domain TEXT,
+    source_url TEXT,
+    status TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    FOREIGN KEY(product_id) REFERENCES products(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS source_crawl_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_source_id INTEGER,
+    source_type TEXT,
+    url TEXT,
+    status TEXT,
+    output_json TEXT,
+    error_json TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    FOREIGN KEY(product_source_id) REFERENCES product_sources(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS sanitized_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_source_id INTEGER,
+    status TEXT,
+    evidence_json TEXT,
+    stats_json TEXT,
+    error_json TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    FOREIGN KEY(product_source_id) REFERENCES product_sources(id)
+  );
 `);

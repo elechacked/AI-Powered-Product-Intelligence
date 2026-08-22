@@ -49,6 +49,7 @@ export function PipelineProgress({
           {pipeline_events.map((event, index) => {
             const stepStatus = event.message === 'done' ? 'completed' :
                                event.message === 'failed' ? 'failed' :
+                               event.message === 'partial' ? 'partial' :
                                event.message === 'processing' ? 'processing' : 'pending'
 
             return (
@@ -64,12 +65,14 @@ export function PipelineProgress({
                     className={cn(
                       'flex h-8 w-8 items-center justify-center rounded-full border-2 bg-background',
                       stepStatus === 'completed' ? 'border-green-500 text-green-500' :
+                      stepStatus === 'partial' ? 'border-amber-500 text-amber-500' :
                       stepStatus === 'processing' ? 'border-blue-500 text-blue-500' :
                       stepStatus === 'failed'     ? 'border-red-500 text-red-500' :
                                                     'border-muted-foreground/40 text-muted-foreground/40'
                     )}
                   >
                     {stepStatus === 'completed'  ? <CheckCircle2 className='h-4 w-4' /> :
+                     stepStatus === 'partial'    ? <AlertCircle className='h-4 w-4' /> :
                      stepStatus === 'processing' ? <Loader2 className='h-4 w-4 animate-spin' /> :
                      stepStatus === 'failed'     ? <XCircle className='h-4 w-4' /> :
                                                    <Circle className='h-4 w-4' />}
@@ -83,13 +86,16 @@ export function PipelineProgress({
                       'text-sm font-semibold capitalize',
                       stepStatus === 'pending' ? 'text-muted-foreground' : 'text-foreground'
                     )}>
-                      {event.event_type}
+                      {event.event_type.replace(/_/g, ' ')}
                     </p>
                     {stepStatus === 'failed' && (
                       <Badge variant='destructive' className='h-5 text-[10px]'>Error</Badge>
                     )}
                     {stepStatus === 'completed' && (
                       <Badge variant='outline' className='h-5 border-green-500 text-[10px] text-green-600'>Done</Badge>
+                    )}
+                    {stepStatus === 'partial' && (
+                      <Badge variant='outline' className='h-5 border-amber-500 text-[10px] text-amber-600'>Partial</Badge>
                     )}
                     {stepStatus === 'processing' && (
                       <Badge variant='outline' className='h-5 border-blue-400 text-[10px] text-blue-600'>Running</Badge>
