@@ -6,6 +6,7 @@
 
 import { search } from './search_provider.mjs';
 import { getDomainCache, setDomainCache, getProductCache, setProductCache } from './cache_manager.mjs';
+import { tieredProductSearch } from './tiered_search.mjs';
 
 const BLOCKED_DOMAINS = new Set([
   "amazon.com", "ebay.com", "walmart.com", "homedepot.com", "lowes.com",
@@ -275,7 +276,7 @@ export async function discoverUrlsForProduct(normalizedProduct) {
     result.domain_resolution_status = domainData.status || 'success';
     
     // Step 2: Search Exact MPN on Resolved Domain
-    const prodRes = await findProductUrlsOnDomain(domainData.domain, normalizedProduct.mfg_part_num);
+    const prodRes = await tieredProductSearch(domainData.domain, normalizedProduct, source.role);
     
     result.product_url = prodRes.product_url;
     result.sku_match_status = prodRes.sku_match_status;

@@ -50,6 +50,7 @@ export function PipelineProgress({
             const stepStatus = event.message === 'done' ? 'completed' :
                                event.message === 'failed' ? 'failed' :
                                event.message === 'partial' ? 'partial' :
+                               event.message === 'skipped' ? 'skipped' :
                                event.message === 'processing' ? 'processing' : 'pending'
 
             return (
@@ -68,6 +69,7 @@ export function PipelineProgress({
                       stepStatus === 'partial' ? 'border-amber-500 text-amber-500' :
                       stepStatus === 'processing' ? 'border-blue-500 text-blue-500' :
                       stepStatus === 'failed'     ? 'border-red-500 text-red-500' :
+                      stepStatus === 'skipped'    ? 'border-gray-400 text-gray-400' :
                                                     'border-muted-foreground/40 text-muted-foreground/40'
                     )}
                   >
@@ -75,6 +77,7 @@ export function PipelineProgress({
                      stepStatus === 'partial'    ? <AlertCircle className='h-4 w-4' /> :
                      stepStatus === 'processing' ? <Loader2 className='h-4 w-4 animate-spin' /> :
                      stepStatus === 'failed'     ? <XCircle className='h-4 w-4' /> :
+                     stepStatus === 'skipped'    ? <Circle className='h-4 w-4 opacity-50' /> :
                                                    <Circle className='h-4 w-4' />}
                   </div>
                 </div>
@@ -96,6 +99,9 @@ export function PipelineProgress({
                     )}
                     {stepStatus === 'partial' && (
                       <Badge variant='outline' className='h-5 border-amber-500 text-[10px] text-amber-600'>Partial</Badge>
+                    )}
+                    {stepStatus === 'skipped' && (
+                      <Badge variant='outline' className='h-5 border-gray-400 text-[10px] text-gray-500'>Skipped</Badge>
                     )}
                     {stepStatus === 'processing' && (
                       <Badge variant='outline' className='h-5 border-blue-400 text-[10px] text-blue-600'>Running</Badge>

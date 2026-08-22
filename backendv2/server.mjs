@@ -6,6 +6,7 @@ import { parseCsvString } from './pipeline/input/csv_reader.ts';
 import { normalizeRows } from './pipeline/input/normalizer.ts';
 import { discoverUrlsForProduct } from './pipeline/orchestration/url_discovery.mjs';
 import { processProductSanitization } from './pipeline/sanitizer.mjs';
+import { runExtractorAgent } from './pipeline/extractor/agent.mjs';
 
 const app = express();
 app.use(cors());
@@ -73,8 +74,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   // 4. Respond to frontend immediately
   res.json({ batch_id: batchId, products_count: products.length, errors });
 
-  // 5. Run Orchestration in the background
-  (async () => {
+  // 5. Run Pipeline in the background
+  executePipelineForProducts(insertedProducts);
+});
+
+async function executePipelineForProducts(insertedProducts) {
     for (const p of insertedProducts) {
       const now = new Date().toISOString();
       db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(now, p.id);
@@ -94,6 +98,23 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'crawler', 'processing', ?, ?)").run(p.id, doneTime, doneTime);
         
         const validSources = orchestrationResult.filter(s => s.product_url && s.url_status === 'success');
+        
+        if (validSources.length === 0) {
+          const finalJson = JSON.stringify({ sku: p.mfg_part_num, sources: orchestrationResult, error: 'no_product_urls_found' });
+          const doneTime = new Date().toISOString();
+          
+          // Mark orchestration as done (the search completed successfully, just found nothing)
+          db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(finalJson, JSON.stringify({error: 'not_found'}), doneTime, doneTime, p.id);
+          
+          // Mark crawler (which was already inserted as processing) as skipped
+          db.prepare("UPDATE product_pipeline_runs SET status = 'skipped', completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'crawler'").run(doneTime, doneTime, p.id);
+          
+          // Insert downstream stages as skipped
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          
+          continue; // Short circuit
+        }
         
         const insertSource = db.prepare(`
           INSERT INTO product_sources (product_id, source_name, source_role, source_domain, source_url, status, created_at, updated_at)
@@ -231,7 +252,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         db.prepare("UPDATE product_pipeline_runs SET status = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'crawler'").run(crawlerStatus, new Date().toISOString(), new Date().toISOString(), p.id);
         if (crawlerStatus === 'done' || crawlerStatus === 'partial' || crawlerStatus === 'failed') {
             // Queue next step: evidence_sanitization
-            db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'evidence_sanitization', 'pending', ?, ?)`).run(p.id, Date.now().toString(), Date.now().toString());
+            const nowIso = new Date().toISOString();
+            db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'evidence_sanitization', 'pending', ?, ?)`).run(p.id, nowIso, nowIso);
         }
         
       } catch (err) {
@@ -242,23 +264,68 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
 
     // PHASE 3: Evidence Sanitization
-    const pendingSanitization = db.prepare("SELECT product_id FROM product_pipeline_runs WHERE stage = 'evidence_sanitization' AND status = 'pending'").all();
+    const pendingSanitization = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'evidence_sanitization' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
     for (let p of pendingSanitization) {
-        const startTime = new Date().toISOString();
-        db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'evidence_sanitization'").run(startTime, p.product_id);
         try {
             const status = processProductSanitization(p.product_id);
             const completeTime = new Date().toISOString();
             db.prepare("UPDATE product_pipeline_runs SET status = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'evidence_sanitization'").run(status, completeTime, completeTime, p.product_id);
-            // Next stage logic will go here
+            if (status === 'done' || status === 'partial' || status === 'failed') {
+                const nowIso = new Date().toISOString();
+                db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'extractor', 'pending', ?, ?)`).run(p.product_id, nowIso, nowIso);
+            }
         } catch(err) {
             console.error('Sanitization failed for product', p.product_id, err);
             const errTime = new Date().toISOString();
             db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'evidence_sanitization'").run(JSON.stringify({ error: err.message }), errTime, errTime, p.product_id);
         }
     }
-  })();
-});
+
+    // PHASE 4: Extractor
+    const pendingExtractor = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'extractor' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
+    for (let p of pendingExtractor) {
+        try {
+            const product = db.prepare("SELECT * FROM products WHERE id = ?").get(p.product_id);
+            const sources = db.prepare("SELECT * FROM product_sources WHERE product_id = ?").all(p.product_id);
+            const evidences = sources.map(source => {
+                const evi = db.prepare("SELECT * FROM sanitized_evidence WHERE product_source_id = ?").get(source.id);
+                if (!evi) return null;
+                return {
+                    source_name: source.source_name,
+                    source_role: source.source_role,
+                    source_url: source.source_url,
+                    evidence_json: evi.evidence_json ? JSON.parse(evi.evidence_json) : null
+                };
+            }).filter(Boolean);
+            
+            const result = await runExtractorAgent(product, evidences);
+            const now = new Date().toISOString();
+            
+            db.prepare(`INSERT INTO product_extractions 
+              (product_id, extraction_status, extraction_json, model_used, provider_used, fallback_used, retry_count, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+                p.product_id,
+                result.parsed.extraction_status,
+                JSON.stringify(result.parsed),
+                result.modelUsed,
+                "google-ai-studio",
+                result.fallbackUsed ? 1 : 0,
+                result.retryCount,
+                now, now
+            );
+
+            db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
+              .run(JSON.stringify({ status: result.parsed.extraction_status, model: result.modelUsed }), now, now, p.product_id);
+              
+        } catch(err) {
+            console.error('Extractor failed for product', p.product_id, err);
+            const errTime = new Date().toISOString();
+            db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
+              .run(JSON.stringify({ error: err.message }), errTime, errTime, p.product_id);
+        }
+    }
+}
+
 
 app.get('/api/stats', (req, res) => {
   const totalRow = db.prepare('SELECT COUNT(*) as c FROM products').get();
@@ -368,6 +435,9 @@ app.get('/api/products/:id', (req, res) => {
           error_json: evi.error_json ? JSON.parse(evi.error_json) : null
       };
   }).filter(Boolean);
+
+  const extraction = db.prepare('SELECT extraction_json FROM product_extractions WHERE product_id = ? ORDER BY id DESC LIMIT 1').get(product.id);
+  const extractorJsonStr = extraction && extraction.extraction_json ? extraction.extraction_json : null;
   
   res.json({
     id: product.id,
@@ -381,12 +451,82 @@ app.get('/api/products/:id', (req, res) => {
     orchestration_json: runs.find(r => r.stage === 'orchestration')?.output_json || null,
     crawler_json: JSON.stringify(crawlerData),
     evidence_json: JSON.stringify(evidenceData),
+    extractor_json: extractorJsonStr,
     error_message: runs.find(r => r.status === 'failed')?.error_json || null
   });
 });
 
 app.post('/api/products/:id/re-enrich', (req, res) => {
-  res.json({ message: 'Re-enrichment queued (stub)' });
+  const productId = parseInt(req.params.id);
+  const now = new Date().toISOString();
+  
+  try {
+    // 1. Fetch the product so we can run the pipeline on it
+    const pRow = db.prepare("SELECT * FROM products WHERE id = ?").get(productId);
+    if (!pRow) return res.status(404).json({ error: 'Product not found' });
+    
+    // Convert flat DB row back to the object structure expected by the pipeline
+    const product = {
+      id: pRow.id,
+      mfg_part_num: pRow.mfg_part_num,
+      part_desc: pRow.part_desc,
+      brand_hints: {
+        e1_brand: pRow.e1_brand,
+        unilog_brand: pRow.unilog_brand,
+        dib_brand: pRow.dib_brand
+      },
+      part_manuf: {
+        raw: pRow.part_manuf_raw,
+        company_name: pRow.part_manuf_company_name,
+        supplier_code: pRow.part_manuf_supplier_code
+      }
+    };
+
+    // 2. Clear out all downstream data in a transaction
+    db.transaction(() => {
+      // Clear product URL cache to force a fresh search!
+      db.prepare("DELETE FROM product_url_cache WHERE normalized_mfg_part_num = ? AND url_status = 'not_found'").run(product.mfg_part_num.toLowerCase().trim());
+      
+      // Delete derived data
+      db.prepare("DELETE FROM product_extractions WHERE product_id = ?").run(productId);
+      
+      const sources = db.prepare("SELECT id FROM product_sources WHERE product_id = ?").all(productId);
+      for (const s of sources) {
+        db.prepare("DELETE FROM sanitized_evidence WHERE product_source_id = ?").run(s.id);
+        db.prepare("DELETE FROM source_crawl_results WHERE product_source_id = ?").run(s.id);
+      }
+      db.prepare("DELETE FROM product_sources WHERE product_id = ?").run(productId);
+      
+      // Clear previous pipeline runs
+      db.prepare("DELETE FROM product_pipeline_runs WHERE product_id = ?").run(productId);
+      
+      // 3. Reset pipeline state to initial states
+      const insertRun = db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
+      insertRun.run(productId, 'input', 'done', now, now, now);
+      insertRun.run(productId, 'orchestration', 'pending', now, null, now);
+    })();
+    
+    // 4. Respond to frontend immediately
+    res.json({ message: 'Re-enrichment queued', product_id: productId });
+    
+    // 5. Trigger the pipeline for this product in the background
+    executePipelineForProducts([product]);
+    
+  } catch (err) {
+    console.error('Re-enrich failed for product', productId, err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/stats/logs', (req, res) => {
+  const limit = req.query.limit || 100;
+  try {
+    const logs = db.prepare('SELECT * FROM llm_logs ORDER BY id DESC LIMIT ?').all(limit);
+    res.json(logs);
+  } catch (err) {
+    // Return empty if table doesn't exist yet or error
+    res.json([]);
+  }
 });
 
 app.get('/api/stats/batches', (req, res) => {

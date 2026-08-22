@@ -18,6 +18,7 @@ frontend/node_modules
 frontend/.github
 backup_scraper.py
 e2e_test.py
-models.json
+backend
 docs
 backend/.venv
+/backend/strings.txt

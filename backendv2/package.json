@@ -10,6 +10,7 @@
         "test:discovery": "node --env-file=.env pipeline/orchestration/test_url_discovery_3m.mjs"
     },
     "dependencies": {
+        "@google/genai": "^2.18.0",
         "apify": "^3.2.2",
         "better-sqlite3": "^13.0.3",
         "cors": "^2.8.6",
