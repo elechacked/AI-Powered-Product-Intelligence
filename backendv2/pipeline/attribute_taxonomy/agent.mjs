@@ -92,6 +92,7 @@ export async function processAttributeTaxonomy(productId, db) {
         const rawName = attr.label || attr.attribute_name;
         const rawValue = attr.raw_value || attr.value;
         if (!rawName) continue;
+        if (rawValue === null || rawValue === undefined || rawValue === '') continue;
         
         processed++;
         const normName = normalizeAttributeName(rawName);

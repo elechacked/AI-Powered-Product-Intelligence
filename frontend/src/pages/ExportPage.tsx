@@ -83,8 +83,8 @@ export function ExportPage() {
               >
                 <option value="">All Uploads (Everything)</option>
                 {batches?.map((b: any) => (
-                  <option key={b.batch_id} value={b.batch_id}>
-                    {b.source_filename} ({b.product_count} items)
+                  <option key={b.id} value={b.id}>
+                    {b.filename} ({b.total} total | ${b.completed_count} completed | ${b.pending_count} pending | ${b.skipped_count} skipped | ${b.failed_count} failed)
                   </option>
                 ))}
               </select>

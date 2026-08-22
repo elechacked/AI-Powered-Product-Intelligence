@@ -34,7 +34,7 @@ export function generateExport(db, batchId, productId = null, confidenceThreshol
     for (const p of products) {
         const sourceId = p.canonical_product_id ? p.canonical_product_id : p.id;
         const valRun = db.prepare("SELECT status FROM product_pipeline_runs WHERE product_id = ? AND stage = 'validator'").get(sourceId);
-        if (!valRun || valRun.status !== 'done') {
+        if (!valRun || (valRun.status !== 'done' && valRun.status !== 'skipped')) {
             pendingCount++;
         }
     }
@@ -80,10 +80,12 @@ export function generateExport(db, batchId, productId = null, confidenceThreshol
             else if (refIndex <= 5) { row[`Ref URL ${refIndex}`] = src.source_url; refIndex++; }
         }
         
-        row['Dept'] = classifications.department || '';
-        row['Class'] = classifications.category || '';
-        row['Fine'] = classifications.sub_category || '';
-        row['Classpath'] = classifications.class_path || '';
+        let classJson = {};
+        if (classifications.classification_json) { try { classJson = JSON.parse(classifications.classification_json); } catch(e){} }
+        row['Dept'] = classJson.department || '';
+        row['Class'] = classJson.class || '';
+        row['Fine'] = classJson.fine || '';
+        row['Classpath'] = classJson.classpath || '';
         
         row['Mfg_Part_Num'] = p.mfg_part_num || '';
         row['Part_Desc'] = p.part_desc || '';
@@ -114,9 +116,7 @@ export function generateExport(db, batchId, productId = null, confidenceThreshol
             const upperName = (pa.attribute_name || '').toUpperCase();
             let exportVal = pa.normalized_value;
             let exportUom = pa.uom || '';
-            if (exportUom && exportVal.toLowerCase().endsWith(exportUom.toLowerCase())) {
-                exportVal = exportVal.substring(0, exportVal.length - exportUom.length).trim();
-            }
+            if (exportUom) { exportVal = exportVal.replace(/[a-zA-Z\s]+$/, '').trim(); }
             const realHeader = fixedHeadersUpper[upperName];
             if (realHeader && realHeader !== 'WITH' && realHeader !== 'APPLICATION' && realHeader !== 'INCLUDES' && !upperName.startsWith('ITEM_FEATURES_') && !upperName.startsWith('ATTRIBUTE_LABEL')) {
                 row[realHeader] = exportVal;

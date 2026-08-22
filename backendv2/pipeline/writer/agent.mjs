@@ -14,9 +14,8 @@ STRICT RULES:
 - In-app description: strictly <= 150 characters, key attributes listed factually.
 - Short description: strictly <= 150 characters, factual summary.
 - Retail description: strictly <= 100 characters, factual.
-- Long description: Full paragraph covering all verified attributes. strictly <= 2000 characters.
-- Marketing description: Return the manufacturer's exact marketing copy verbatim from the input if provided. If not provided, return null. Do NOT rewrite or create one.
-- generation_status must be one of: "success" (all 6 core fields generated), "partial" (some fields generated), "insufficient_data" (too few facts to generate useful descriptions).
+- Long description: REQUIRED field. A descriptive paragraph covering the verified attributes. Write complete sentences. You MUST generate this field using whatever facts are available. Strictly <= 2000 characters.
+- generation_status must be one of: "success" (all 5 core fields generated), "partial" (some fields generated), "insufficient_data" (too few facts to generate useful descriptions).
 - fields_generated must be the exact count of non-null description fields in your response.
 
 Do not add filler text to reach a target length. Shorter accurate descriptions are better than longer inaccurate ones.`;

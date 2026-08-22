@@ -34,18 +34,13 @@ export const writerSchema = {
         },
         long_description: {
             type: Type.STRING,
-            nullable: true,
-            description: 'Full descriptive paragraph listing all key verified attributes and facts, strictly <= 2000 chars.'
+            nullable: false,
+            description: 'REQUIRED field. A descriptive paragraph covering the verified attributes. Write complete sentences. You MUST generate this field. Strictly <= 2000 chars.'
         },
         retail_description: {
             type: Type.STRING,
             nullable: true,
             description: 'Retail-optimized copy. Clear, benefit-driven, factual, strictly <= 100 chars.'
-        },
-        marketing_description: {
-            type: Type.STRING,
-            nullable: true,
-            description: 'Manufacturer marketing copy preserved verbatim. If unavailable, null.'
         },
         generation_status: {
             type: Type.STRING,
@@ -58,8 +53,7 @@ export const writerSchema = {
     },
     propertyOrdering: [
         'invoice_description', 'mobile_description', 'in_app_description',
-        'short_description', 'long_description', 'retail_description',
-        'marketing_description', 'generation_status', 'fields_generated'
+        'short_description', 'long_description', 'retail_description', 'generation_status', 'fields_generated'
     ]
 };
 

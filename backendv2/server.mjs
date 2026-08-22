@@ -101,7 +101,7 @@ async function executePipelineForProducts(insertedProducts) {
           AND canonical_product_id IS NULL 
           AND id IN (
             SELECT product_id FROM product_pipeline_runs 
-            WHERE stage = 'normalizer' AND status IN ('done', 'skipped')
+            WHERE stage = 'validator' AND status IN ('done', 'skipped')
           )
         ORDER BY id DESC LIMIT 1
       `).get(normalizedSku, p.id);
@@ -370,6 +370,10 @@ async function executePipelineForProducts(insertedProducts) {
                 result.retryCount,
                 now, now
             );
+            
+            if (result.parsed.manufacturer_name) {
+                db.prepare("UPDATE products SET manufacturer_name = ? WHERE id = ?").run(result.parsed.manufacturer_name, p.product_id);
+            }
 
             db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
               .run(JSON.stringify({ status: result.parsed.extraction_status, model: result.modelUsed }), now, now, p.product_id);
@@ -511,23 +515,15 @@ app.get('/api/products', (req, res) => {
   const batchId = req.query.batch_id;
   let query = 'SELECT * FROM products';
   const params = [];
-  
-  if (batchId) {
-    query += ' WHERE import_batch_id = ?';
-    params.push(batchId);
-  }
-  
+  if (batchId) { query += ' WHERE import_batch_id = ?'; params.push(batchId); }
   query += ' ORDER BY id DESC LIMIT 50';
-  
   const rows = db.prepare(query).all(...params);
   
   const items = rows.map(r => {
-    // Determine overall status
     const runs = db.prepare('SELECT * FROM product_pipeline_runs WHERE product_id = ?').all(r.id);
     const hasFailed = runs.some(run => run.status === 'failed');
     const hasPending = runs.some(run => run.status === 'pending' || run.status === 'processing');
     const notFound = runs.some(run => run.stage === 'orchestration' && run.error_json && run.error_json.includes('not_found'));
-    
     let jobStatus = 'completed';
     if (hasFailed) jobStatus = 'failed';
     else if (hasPending) jobStatus = 'pending';
@@ -538,16 +534,12 @@ app.get('/api/products', (req, res) => {
       mfg_part_num: r.mfg_part_num,
       part_desc: r.part_desc,
       job_status: jobStatus,
-      commerce_ready: false,
+      commerce_ready: r.commerce_ready === 1,
       confidence_scores: {
-        extraction_confidence: null,
-        classification_confidence: null,
-        validation_confidence: null,
-        overall_confidence: null
+        overall_confidence: r.overall_confidence
       }
     };
   });
-  
   res.json({ items, total: rows.length });
 });
 
@@ -734,6 +726,9 @@ app.post('/api/products/:id/re-enrich', (req, res) => {
       // Delete derived data
       db.prepare("DELETE FROM product_extractions WHERE product_id = ?").run(productId);
       db.prepare("DELETE FROM product_classifications WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM product_attribute_values WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM product_descriptions WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM validation_issues WHERE product_id = ?").run(productId);
       
       const sources = db.prepare("SELECT id FROM product_sources WHERE product_id = ?").all(productId);
       for (const s of sources) {
@@ -778,8 +773,40 @@ app.get('/api/stats/logs', (req, res) => {
 });
 
 app.get('/api/stats/batches', (req, res) => {
-  const rows = db.prepare('SELECT id, original_filename as filename, total_products as total, created_at FROM import_batches ORDER BY id DESC').all();
-  res.json(rows);
+  const batches = db.prepare('SELECT id, original_filename as filename, total_products as total, created_at FROM import_batches ORDER BY id DESC').all();
+  
+  const enriched = batches.map(b => {
+    const products = db.prepare('SELECT id, canonical_product_id FROM products WHERE import_batch_id = ?').all(b.id);
+    
+    let completed = 0;
+    let failed = 0;
+    let pending = 0;
+    let skipped = 0;
+    
+    for (const p of products) {
+        const targetId = p.canonical_product_id || p.id;
+        const runs = db.prepare("SELECT status, stage, error_json FROM product_pipeline_runs WHERE product_id = ?").all(targetId);
+        
+        const hasFailed = runs.some(r => r.status === 'failed');
+        const hasPending = runs.some(r => r.status === 'pending' || r.status === 'processing');
+        const notFound = runs.some(r => r.stage === 'orchestration' && r.error_json && r.error_json.includes('not_found'));
+        
+        if (hasFailed) failed++;
+        else if (hasPending) pending++;
+        else if (notFound) skipped++;
+        else completed++;
+    }
+    
+    return {
+        ...b,
+        completed_count: completed,
+        failed_count: failed,
+        pending_count: pending,
+        skipped_count: skipped
+    };
+  });
+  
+  res.json(enriched);
 });
 
 app.get('/api/export', async (req, res) => {

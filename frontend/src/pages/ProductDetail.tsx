@@ -240,6 +240,9 @@ export function ProductDetail() {
                   <TabsTrigger className='flex-1' value='product_attributes'>
                     Attributes JSON
                   </TabsTrigger>
+                  <TabsTrigger className='flex-1' value='taxonomy'>
+                    Attribute Taxonomy
+                  </TabsTrigger>
                   <TabsTrigger className='flex-1' value='normalizer'>
                     Normalizer JSON
                   </TabsTrigger>
