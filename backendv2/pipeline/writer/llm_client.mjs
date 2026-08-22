@@ -15,32 +15,32 @@ export const writerSchema = {
         invoice_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Short terse description <= 40 chars, UPPERCASE. Brand + type + key spec.'
+            description: 'Strictly <= 40 chars, UPPERCASE. Brand + type + key spec.'
         },
         mobile_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Short sentence for mobile UI display, ~80 chars.'
+            description: 'Short sentence for mobile UI display, strictly <= 80 chars.'
         },
         in_app_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Slightly expanded, ~150 chars, suitable for in-app product listing.'
+            description: 'Slightly expanded, strictly <= 150 chars, suitable for in-app product listing.'
         },
         short_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Concise product summary, 1-2 sentences, ~200 chars.'
+            description: 'Concise product summary, strictly <= 150 chars.'
         },
         long_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Full descriptive paragraph listing all key verified attributes and facts, no bullet points.'
+            description: 'Full descriptive paragraph listing all key verified attributes and facts, strictly <= 2000 chars.'
         },
         retail_description: {
             type: Type.STRING,
             nullable: true,
-            description: 'Retail-optimized copy. Clear, benefit-driven, factual, ~250 chars.'
+            description: 'Retail-optimized copy. Clear, benefit-driven, factual, strictly <= 100 chars.'
         },
         marketing_description: {
             type: Type.STRING,

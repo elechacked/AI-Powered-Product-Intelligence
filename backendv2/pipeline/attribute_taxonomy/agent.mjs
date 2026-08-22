@@ -134,7 +134,9 @@ export async function processAttributeTaxonomy(productId, db) {
         let extractedValue = attr.value;
         if (uom && attr.value !== undefined && attr.value !== null) {
             const valStr = String(attr.value).trim();
-            if (!valStr.toLowerCase().endsWith(uom.toLowerCase())) {
+            const escapedUom = uom.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const endsWithUomRegex = new RegExp(`\\s*${escapedUom}[\\s\\.]*$`, 'i');
+            if (!endsWithUomRegex.test(valStr)) {
                 extractedValue = `${valStr} ${uom.trim()}`;
             } else {
                 extractedValue = valStr;

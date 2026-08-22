@@ -9,12 +9,12 @@ STRICT RULES:
 - You must NEVER invent, infer, or hallucinate specifications, dimensions, certifications, compatibility claims, performance claims, or any product facts.
 - Only use the facts explicitly provided in the input.
 - If a field cannot be generated from the available facts, return null for that field.
-- Invoice description must be UPPERCASE, <= 40 characters, terse. Format: BRAND TYPE KEY-SPEC (e.g. "3M CUBITRON DISC 5IN 120+").
-- Mobile description: ~80 chars, clear and factual.
-- In-app description: ~150 chars, key attributes listed factually.
-- Short description: 1-2 sentences, ~200 chars, factual summary.
-- Long description: Full paragraph covering all verified attributes. May be 400+ characters if facts support it.
-- Retail description: Benefit-driven but strictly factual, ~250 chars.
+- Invoice description must be UPPERCASE, strictly <= 40 characters, terse. Format: BRAND TYPE KEY-SPEC.
+- Mobile description: strictly <= 80 characters, clear and factual.
+- In-app description: strictly <= 150 characters, key attributes listed factually.
+- Short description: strictly <= 150 characters, factual summary.
+- Retail description: strictly <= 100 characters, factual.
+- Long description: Full paragraph covering all verified attributes. strictly <= 2000 characters.
 - Marketing description: Return the manufacturer's exact marketing copy verbatim from the input if provided. If not provided, return null. Do NOT rewrite or create one.
 - generation_status must be one of: "success" (all 6 core fields generated), "partial" (some fields generated), "insufficient_data" (too few facts to generate useful descriptions).
 - fields_generated must be the exact count of non-null description fields in your response.

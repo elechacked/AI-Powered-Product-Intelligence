@@ -11,6 +11,7 @@ import { runTaxonomyClassifierAgent } from './pipeline/classifier/agent.mjs';
 import { processAttributeTaxonomy } from './pipeline/attribute_taxonomy/agent.mjs';
 import { processNormalizer } from './pipeline/normalizer/agent.mjs';
 import { processWriter } from './pipeline/writer/agent.mjs';
+import { processValidator } from './pipeline/validator/agent.mjs';
 
 const app = express();
 app.use(cors());
@@ -120,6 +121,7 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit, use canonical
       }
@@ -166,6 +168,7 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit
         }
@@ -416,10 +419,28 @@ async function executePipelineForProducts(insertedProducts) {
                         const timeWriterDone = new Date().toISOString();
                         const wStatus = (writerRes.status === 'skipped' || writerRes.status === 'reused') ? writerRes.status : 'done';
                         db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(wStatus, JSON.stringify(writerRes), timeWriterDone, timeWriterDone, p.product_id);
+                        
+                        // --- PHASE 8: Validator ---
+                        const timeValidator = new Date().toISOString();
+                        db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'validator', 'processing', ?, ?)").run(p.product_id, timeValidator, timeValidator);
+                        try {
+                            const valRes = await processValidator(p.product_id, db);
+                            const timeValDone = new Date().toISOString();
+                            const vStatus = (valRes.status === 'skipped' || valRes.status === 'reused') ? valRes.status : 'done';
+                            db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'validator'").run(vStatus, JSON.stringify(valRes), timeValDone, timeValDone, p.product_id);
+                        } catch (ve) {
+                            console.error(`[Orchestrator] Product ${p.product_id} Validator failed:`, ve);
+                            const tVErr = new Date().toISOString();
+                            db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'validator'").run(JSON.stringify({ error: ve.message }), tVErr, tVErr, p.product_id);
+                        }
                     } catch (we) {
                         console.error(`[Orchestrator] Product ${p.product_id} Writer failed:`, we);
-                        const timeWriterFail = new Date().toISOString();
-                        db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(JSON.stringify({ error: we.message }), timeWriterFail, timeWriterFail, p.product_id);
+                        const tWErr = new Date().toISOString();
+                        db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(JSON.stringify({ error: we.message }), tWErr, tWErr, p.product_id);
+                        
+                        // Explicitly skip downstream Validator on Writer failure
+                        const tVSkip = new Date().toISOString();
+                        db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'skipped', ?, ?, ?)").run(p.product_id, tVSkip, tVSkip, tVSkip);
                     }
                 } catch (ne) {
                     console.error(`[Orchestrator] Product ${p.product_id} Normalizer failed:`, ne);
@@ -641,7 +662,9 @@ app.get('/api/products/:id', (req, res) => {
       console.error("Failed to load product attributes API", e);
   }
 
-  res.json({
+    const validation_issues = db.prepare('SELECT field_name, issue_type, severity, description, value_a, value_b FROM validation_issues WHERE product_id = ?').all(targetId);
+
+    res.json({
     id: product.id,
     batch_id: product.import_batch_id,
     mfg_part_num: product.mfg_part_num,
@@ -658,6 +681,7 @@ app.get('/api/products/:id', (req, res) => {
         validation_confidence: null,
         overall_confidence: null
     },
+    validation_issues,
     pipeline_events,
     input_json: product.input_json,
     orchestration_json: targetRuns.find(r => r.stage === 'orchestration')?.output_json || null,
