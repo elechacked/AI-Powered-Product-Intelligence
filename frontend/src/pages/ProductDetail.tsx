@@ -165,13 +165,14 @@ export function ProductDetail() {
             {/* ── Enriched output — only when pipeline finished ── */}
             {isDone && (
               <Tabs defaultValue="output" className="w-full mt-6">
-                <TabsList className="grid w-full grid-cols-6 mb-6">
-                  <TabsTrigger value="output">Enriched Output</TabsTrigger>
-                  <TabsTrigger value="input">Input JSON</TabsTrigger>
-                  <TabsTrigger value="orchestration">Orchestration JSON</TabsTrigger>
-                  <TabsTrigger value="crawler">Crawler JSON</TabsTrigger>
-                  <TabsTrigger value="evidence">Evidence JSON</TabsTrigger>
-                  <TabsTrigger value="extractor">Extractor JSON</TabsTrigger>
+                <TabsList className="flex w-full flex-wrap gap-2 mb-6 h-auto p-1 bg-muted rounded-md justify-start">
+                  <TabsTrigger className="flex-1" value="output">Enriched Output</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="input">Input JSON</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="orchestration">Orchestration JSON</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="crawler">Crawler JSON</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="evidence">Evidence JSON</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="extractor">Extractor JSON</TabsTrigger>
+                  <TabsTrigger className="flex-1" value="classifier">Classifier JSON</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="output">
@@ -247,6 +248,13 @@ export function ProductDetail() {
                       {product.extractor_json 
                         ? formatSafeJson(product.extractor_json)
                         : "No extractor JSON available (pipeline may still be running or extractor failed)."}
+                    </pre>
+                  </div>
+                </TabsContent>
+                <TabsContent value="classifier">
+                  <div className='rounded-md bg-zinc-950 p-4'>
+                    <pre className='text-sm text-zinc-50 overflow-auto whitespace-pre-wrap'>
+                      {product.classifier_json ? JSON.stringify(JSON.parse(product.classifier_json), null, 2) : 'No classification data available'}
                     </pre>
                   </div>
                 </TabsContent>

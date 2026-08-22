@@ -31,6 +31,11 @@ export function PipelineProgress({
                 <CheckCircle2 className='h-3 w-3' /> Completed
               </Badge>
             )}
+            {status === 'not_found' && (
+              <Badge variant='outline' className='gap-1 border-amber-500 text-amber-600'>
+                <CheckCircle2 className='h-3 w-3' /> Completed (No URLs)
+              </Badge>
+            )}
             {status === 'failed' && (
               <Badge variant='outline' className='gap-1 border-red-500 text-red-600'>
                 <XCircle className='h-3 w-3' /> Failed
@@ -47,7 +52,8 @@ export function PipelineProgress({
       <CardContent>
         <div className='relative space-y-0'>
           {pipeline_events.map((event, index) => {
-            const stepStatus = event.message === 'done' ? 'completed' :
+            const stepStatus = event.message === 'not_found' ? 'not_found' :
+                               event.message === 'done' ? 'completed' :
                                event.message === 'failed' ? 'failed' :
                                event.message === 'partial' ? 'partial' :
                                event.message === 'skipped' ? 'skipped' :
@@ -80,6 +86,7 @@ export function PipelineProgress({
                      stepStatus === 'processing' ? <Loader2 className='h-4 w-4 animate-spin' /> :
                      stepStatus === 'failed'     ? <XCircle className='h-4 w-4' /> :
                      stepStatus === 'reused'     ? <CheckCircle2 className='h-4 w-4' /> :
+                     stepStatus === 'not_found'  ? <CheckCircle2 className='h-4 w-4 opacity-75 text-amber-500' /> :
                      stepStatus === 'skipped'    ? <Circle className='h-4 w-4 opacity-50' /> :
                                                    <Circle className='h-4 w-4' />}
                   </div>
@@ -99,6 +106,9 @@ export function PipelineProgress({
                     )}
                     {stepStatus === 'completed' && (
                       <Badge variant='outline' className='h-5 border-green-500 text-[10px] text-green-600'>Done</Badge>
+                    )}
+                    {stepStatus === 'not_found' && (
+                      <Badge variant='outline' className='h-5 border-amber-500 text-[10px] text-amber-600'>No URLs Found</Badge>
                     )}
                     {stepStatus === 'partial' && (
                       <Badge variant='outline' className='h-5 border-amber-500 text-[10px] text-amber-600'>Partial</Badge>

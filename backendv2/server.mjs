@@ -7,6 +7,7 @@ import { normalizeRows } from './pipeline/input/normalizer.ts';
 import { discoverUrlsForProduct } from './pipeline/orchestration/url_discovery.mjs';
 import { processProductSanitization } from './pipeline/sanitizer.mjs';
 import { runExtractorAgent } from './pipeline/extractor/agent.mjs';
+import { runTaxonomyClassifierAgent } from './pipeline/classifier/agent.mjs';
 
 const app = express();
 app.use(cors());
@@ -112,6 +113,7 @@ async function executePipelineForProducts(insertedProducts) {
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'crawler', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit, use canonical
       }
@@ -154,6 +156,7 @@ async function executePipelineForProducts(insertedProducts) {
           // Insert downstream stages as skipped
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
           
           continue; // Short circuit
         }
@@ -359,11 +362,25 @@ async function executePipelineForProducts(insertedProducts) {
             db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
               .run(JSON.stringify({ status: result.parsed.extraction_status, model: result.modelUsed }), now, now, p.product_id);
               
+            const nextTime = new Date().toISOString();
+            db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'classifier', 'pending', ?, ?)`).run(p.product_id, nextTime, nextTime);
+              
         } catch(err) {
             console.error('Extractor failed for product', p.product_id, err);
             const errTime = new Date().toISOString();
             db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
               .run(JSON.stringify({ error: err.message }), errTime, errTime, p.product_id);
+        }
+    }
+
+    // PHASE 5: Classifier
+    const pendingClassifier = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'classifier' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
+    for (let p of pendingClassifier) {
+        try {
+            const product = db.prepare("SELECT * FROM products WHERE id = ?").get(p.product_id);
+            await runTaxonomyClassifierAgent(product);
+        } catch (err) {
+            console.error('Classifier wrapper failed for product', p.product_id, err);
         }
     }
 }
@@ -392,6 +409,23 @@ app.get('/api/upload/batches/:batchId', (req, res) => {
   res.json({ total, pending, completed, pct_complete: pct });
 });
 
+app.get('/api/categories', (req, res) => {
+  try {
+    const nodes = db.prepare('SELECT id, parent_id, level, name, canonical_path FROM taxonomy_nodes').all();
+    const categories = nodes.map(n => ({
+      id: n.id,
+      name: n.name,
+      parent_id: n.parent_id,
+      classpath: n.canonical_path,
+      required_attributes: []
+    }));
+    res.json(categories);
+  } catch (err) {
+    console.error('Error fetching categories:', err);
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
 app.get('/api/products', (req, res) => {
   const batchId = req.query.batch_id;
   let query = 'SELECT * FROM products';
@@ -411,10 +445,12 @@ app.get('/api/products', (req, res) => {
     const runs = db.prepare('SELECT * FROM product_pipeline_runs WHERE product_id = ?').all(r.id);
     const hasFailed = runs.some(run => run.status === 'failed');
     const hasPending = runs.some(run => run.status === 'pending' || run.status === 'processing');
+    const notFound = runs.some(run => run.stage === 'orchestration' && run.error_json && run.error_json.includes('not_found'));
     
     let jobStatus = 'completed';
     if (hasFailed) jobStatus = 'failed';
     else if (hasPending) jobStatus = 'pending';
+    else if (notFound) jobStatus = 'not_found';
     
     return {
       id: r.id,
@@ -422,7 +458,12 @@ app.get('/api/products', (req, res) => {
       part_desc: r.part_desc,
       job_status: jobStatus,
       commerce_ready: false,
-      overall_confidence: null
+      confidence_scores: {
+        extraction_confidence: null,
+        classification_confidence: null,
+        validation_confidence: null,
+        overall_confidence: null
+      }
     };
   });
   
@@ -444,7 +485,7 @@ app.get('/api/products/:id', (req, res) => {
 
   const pipeline_events = runs.map(run => ({
     event_type: run.stage,
-    message: run.status
+    message: (run.stage === 'orchestration' && run.error_json && run.error_json.includes('not_found')) ? 'not_found' : run.status
   }));
   
   const targetId = product.canonical_product_id || product.id;
@@ -483,6 +524,31 @@ app.get('/api/products/:id', (req, res) => {
 
   const extraction = db.prepare('SELECT extraction_json FROM product_extractions WHERE product_id = ? ORDER BY id DESC LIMIT 1').get(targetId);
   const extractorJsonStr = extraction && extraction.extraction_json ? extraction.extraction_json : null;
+  const classJson = (product.canonical_product_id ? db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.canonical_product_id) : db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.id))?.classification_json || null;
+  
+  let extraction_confidence = null;
+  if (extractorJsonStr) {
+     try {
+       const extObj = JSON.parse(extractorJsonStr);
+       const confs = [];
+       if (extObj.attributes) {
+           extObj.attributes.forEach(a => { if (typeof a.confidence === 'number') confs.push(a.confidence); });
+       }
+       if (extObj.description && typeof extObj.description.confidence === 'number') confs.push(extObj.description.confidence);
+       if (confs.length > 0) {
+           extraction_confidence = confs.reduce((a, b) => a + b, 0) / confs.length;
+           extraction_confidence = Math.round(extraction_confidence * 100) / 100;
+       }
+     } catch(e) {}
+  }
+  
+  let classification_confidence = null;
+  if (classJson) {
+      try {
+          const cObj = JSON.parse(classJson);
+          if (typeof cObj.confidence === 'number') classification_confidence = cObj.confidence;
+      } catch(e){}
+  }
   
   res.json({
     id: product.id,
@@ -492,12 +558,19 @@ app.get('/api/products/:id', (req, res) => {
     job_status: jobStatus,
     commerce_ready: false,
     overall_confidence: null,
+    confidence_scores: {
+        extraction_confidence,
+        classification_confidence,
+        validation_confidence: null,
+        overall_confidence: null
+    },
     pipeline_events,
     input_json: product.input_json,
     orchestration_json: targetRuns.find(r => r.stage === 'orchestration')?.output_json || null,
     crawler_json: JSON.stringify(crawlerData),
     evidence_json: JSON.stringify(evidenceData),
     extractor_json: extractorJsonStr,
+    classifier_json: (product.canonical_product_id ? db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.canonical_product_id) : db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.id))?.classification_json || null,
     error_message: runs.find(r => r.status === 'failed')?.error_json || null
   });
 });
@@ -535,6 +608,7 @@ app.post('/api/products/:id/re-enrich', (req, res) => {
       
       // Delete derived data
       db.prepare("DELETE FROM product_extractions WHERE product_id = ?").run(productId);
+      db.prepare("DELETE FROM product_classifications WHERE product_id = ?").run(productId);
       
       const sources = db.prepare("SELECT id FROM product_sources WHERE product_id = ?").all(productId);
       for (const s of sources) {

@@ -32,20 +32,21 @@ function TaxonomyPage() {
 
   // Extract unique attributes from all products
   const getUniqueAttributes = () => {
-    if (!products || !Array.isArray(products)) return []
+    if (!products) return []
+    const productsList = Array.isArray(products) ? products : products.items || [];
     const attrSet = new Set<string>()
-    products.forEach((p: any) => {
-      if (p.enriched && p.enriched.attributes) {
-        Object.keys(p.enriched.attributes).forEach((attr) => {
-          if (
-            attr !== 'source_url' &&
-            attr !== 'source_snippet' &&
-            attr !== 'confidence' &&
-            attr !== 'reasoning'
-          ) {
-            attrSet.add(attr)
+    productsList.forEach((p: any) => {
+      if (p.extractor_json) {
+        try {
+          const ext = JSON.parse(p.extractor_json);
+          if (ext.attributes && Array.isArray(ext.attributes)) {
+            ext.attributes.forEach((attrObj: any) => {
+              if (attrObj.attribute_name) {
+                attrSet.add(attrObj.attribute_name);
+              }
+            });
           }
-        })
+        } catch (e) {}
       }
     })
     return Array.from(attrSet).sort()

@@ -109,6 +109,12 @@ export const ProductTable = ({
               Enriched
             </Badge>
           )
+        } else if (status === 'not_found') {
+          return (
+            <Badge variant='outline' className='border-amber-500/20 bg-amber-500/10 text-amber-600'>
+              No URLs Found
+            </Badge>
+          )
         } else if (status === 'completed' && !ready) {
           return (
             <Badge variant='outline' className='border-amber-500/20 bg-amber-500/10 text-amber-600'>

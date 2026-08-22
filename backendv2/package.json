@@ -17,6 +17,7 @@
         "duck-duck-scrape": "^2.2.7",
         "express": "^5.2.1",
         "google-it": "^1.6.4",
+        "groq-sdk": "^1.5.0",
         "multer": "^2.2.0",
         "thecrawler": "file:thecrawler-0.5.8.tgz"
     },
