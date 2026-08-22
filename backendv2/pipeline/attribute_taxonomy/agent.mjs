@@ -123,24 +123,57 @@ export async function processAttributeTaxonomy(productId, db) {
             }
         }
         
+        // --- Fix: UOM and Inference extraction ---
+        const uom = attr.uom || null;
+        const isInferred = attr.is_inferred === true ? 1 : 0;
+        if (uom) {
+            db.prepare("UPDATE taxonomy_attributes SET is_dimensional = 1 WHERE id = ?").run(attrId);
+        }
+
+        // --- Fix: Ensure combined value + uom is passed to normalizer ---
+        let extractedValue = attr.value;
+        if (uom && attr.value !== undefined && attr.value !== null) {
+            const valStr = String(attr.value).trim();
+            if (!valStr.toLowerCase().endsWith(uom.toLowerCase())) {
+                extractedValue = `${valStr} ${uom.trim()}`;
+            } else {
+                extractedValue = valStr;
+            }
+        }
+
         // --- NEW: Product Attribute Persistence ---
-        const provenance = [{
-            source_url: attr.source_url || null,
-            source_name: attr.source_name || null,
-            source_role: attr.source_role || null,
-            source_snippet: attr.source_snippet || null,
-            confidence: attr.confidence || null,
-            reasoning: attr.reasoning || null
-        }];
+        // Support multi-source logic deterministically by fetching existing provenance if any
+        let provenance = [];
+        const existingProdAttr = db.prepare("SELECT id, provenance_json FROM product_attribute_values WHERE product_id = ? AND taxonomy_attribute_id = ?").get(productId, attrId);
+        
+        if (existingProdAttr && existingProdAttr.provenance_json) {
+            try {
+                provenance = JSON.parse(existingProdAttr.provenance_json);
+            } catch(e) {}
+        }
+        
+        // Ensure we don't duplicate the exact same source
+        const sourceUrl = attr.source_url || null;
+        const existsInProv = provenance.find(p => p.source_url === sourceUrl && p.source_snippet === attr.source_snippet);
+        if (!existsInProv) {
+            provenance.push({
+                source_url: sourceUrl,
+                source_name: attr.source_name || null,
+                source_role: attr.source_role || null,
+                source_snippet: attr.source_snippet || null,
+                confidence: attr.confidence || null,
+                reasoning: attr.reasoning || null,
+                is_inferred: isInferred === 1
+            });
+        }
         const provStr = JSON.stringify(provenance);
         
-        const existingProdAttr = db.prepare("SELECT id FROM product_attribute_values WHERE product_id = ? AND taxonomy_attribute_id = ?").get(productId, attrId);
         if (existingProdAttr) {
-            db.prepare("UPDATE product_attribute_values SET taxonomy_attribute_value_id = ?, raw_value = ?, extracted_value = ?, provenance_json = ?, updated_at = ? WHERE id = ?")
-              .run(valId, attr.raw_value || attr.value, attr.value, provStr, new Date().toISOString(), existingProdAttr.id);
+            db.prepare("UPDATE product_attribute_values SET taxonomy_attribute_value_id = ?, raw_value = ?, extracted_value = ?, uom = ?, is_inferred = ?, provenance_json = ?, updated_at = ? WHERE id = ?")
+              .run(valId, attr.raw_value || extractedValue, extractedValue, uom, isInferred, provStr, new Date().toISOString(), existingProdAttr.id);
         } else {
-            db.prepare("INSERT INTO product_attribute_values (product_id, taxonomy_attribute_id, taxonomy_attribute_value_id, raw_value, extracted_value, provenance_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-              .run(productId, attrId, valId, attr.raw_value || attr.value, attr.value, provStr, new Date().toISOString(), new Date().toISOString());
+            db.prepare("INSERT INTO product_attribute_values (product_id, taxonomy_attribute_id, taxonomy_attribute_value_id, raw_value, extracted_value, uom, is_inferred, provenance_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+              .run(productId, attrId, valId, attr.raw_value || extractedValue, extractedValue, uom, isInferred, provStr, new Date().toISOString(), new Date().toISOString());
         }
     }
     

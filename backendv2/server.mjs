@@ -613,8 +613,8 @@ app.get('/api/products/:id', (req, res) => {
   let product_attributes_json = null;
   try {
       const pAttrRows = db.prepare(`
-          SELECT pa.raw_value, pa.extracted_value, pa.provenance_json, pa.normalized_value, pa.normalization_status, pa.normalization_method,
-                 ta.attribute_name, ta.normalized_name,
+          SELECT pa.raw_value, pa.extracted_value, pa.provenance_json, pa.normalized_value, pa.normalization_status, pa.normalization_method, pa.uom, pa.is_inferred,
+                 ta.attribute_name, ta.normalized_name, ta.is_dimensional,
                  tav.value_text as taxonomy_value
           FROM product_attribute_values pa
           JOIN taxonomy_attributes ta ON pa.taxonomy_attribute_id = ta.id
@@ -631,6 +631,9 @@ app.get('/api/products/:id', (req, res) => {
               normalization_method: pa.normalization_method,
               raw_value: pa.raw_value,
               taxonomy_value: pa.taxonomy_value,
+              uom: pa.uom,
+              is_inferred: pa.is_inferred === 1,
+              is_dimensional: pa.is_dimensional === 1,
               provenance: pa.provenance_json ? JSON.parse(pa.provenance_json) : []
           }));
       }
@@ -644,8 +647,10 @@ app.get('/api/products/:id', (req, res) => {
     mfg_part_num: product.mfg_part_num,
     part_desc: product.part_desc,
     job_status: jobStatus,
-    commerce_ready: false,
-    overall_confidence: null,
+    commerce_ready: product.commerce_ready === 1,
+    overall_confidence: product.overall_confidence,
+    validation_status: product.validation_status,
+    manufacturer_name: product.manufacturer_name,
     product_attributes_json,
     confidence_scores: {
         extraction_confidence,
