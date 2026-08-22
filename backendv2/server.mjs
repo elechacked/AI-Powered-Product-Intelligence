@@ -35,8 +35,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   const insertProduct = db.prepare(`
     INSERT INTO products (
       import_batch_id, mfg_part_num, part_desc, e1_brand, unilog_brand, dib_brand,
-      part_manuf_raw, part_manuf_company_name, part_manuf_supplier_code, input_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      part_manuf_raw, part_manuf_company_name, part_manuf_supplier_code, input_json, created_at, updated_at,
+      normalized_mfg_part_num
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertPipelineRun = db.prepare(`
@@ -48,6 +49,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
   for (const p of products) {
     const now = new Date().toISOString();
+    const normalizedSku = p.mfg_part_num.toLowerCase().replace(/[^a-z0-9]/g, '');
     const result = insertProduct.run(
       batchId,
       p.mfg_part_num,
@@ -60,15 +62,16 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       p.part_manuf?.supplier_code || null,
       JSON.stringify(p),
       now,
-      now
+      now,
+      normalizedSku
     );
     const productId = result.lastInsertRowid;
-    insertedProducts.push({ id: productId, ...p });
+    insertedProducts.push({ id: productId, ...p, normalized_mfg_part_num: normalizedSku });
 
     // Mark input stage done
     insertPipelineRun.run(productId, 'input', 'done', null, now, now, now);
-    // Mark orchestration pending
-    insertPipelineRun.run(productId, 'orchestration', 'pending', null, now, null, now);
+    // Mark deduplicator pending
+    insertPipelineRun.run(productId, 'deduplicator', 'pending', null, now, null, now);
   }
 
   // 4. Respond to frontend immediately
@@ -81,6 +84,45 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 async function executePipelineForProducts(insertedProducts) {
     for (const p of insertedProducts) {
       const now = new Date().toISOString();
+      const normalizedSku = p.mfg_part_num.toLowerCase().replace(/[^a-z0-9]/g, '');
+      
+      // -- PHASE: Deduplicator --
+      db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'").run(now, p.id);
+      
+      const canonical = db.prepare(`
+        SELECT id FROM products 
+        WHERE normalized_mfg_part_num = ? 
+          AND id != ? 
+          AND canonical_product_id IS NULL 
+          AND id IN (
+            SELECT product_id FROM product_pipeline_runs 
+            WHERE stage = 'extractor' AND status IN ('done', 'skipped')
+          )
+        ORDER BY id DESC LIMIT 1
+      `).get(normalizedSku, p.id);
+      
+      if (canonical) {
+          db.prepare("UPDATE products SET canonical_product_id = ? WHERE id = ?").run(canonical.id, p.id);
+          
+          const doneTime = new Date().toISOString();
+          db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'")
+            .run(JSON.stringify({ status: 'duplicate_found', canonical_product_id: canonical.id }), doneTime, doneTime, p.id);
+            
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'orchestration', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'crawler', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
+          
+          continue; // Short circuit, use canonical
+      }
+      
+      const uniqueTime = new Date().toISOString();
+      db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'")
+        .run(JSON.stringify({ status: 'unique', normalized_mfg_part_num: normalizedSku }), uniqueTime, uniqueTime, p.id);
+        
+      db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'orchestration', 'pending', ?, ?)").run(p.id, uniqueTime, uniqueTime);
+      
+      // -- PHASE: Orchestration --
       db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(now, p.id);
       
       try {
@@ -404,9 +446,12 @@ app.get('/api/products/:id', (req, res) => {
     event_type: run.stage,
     message: run.status
   }));
+  
+  const targetId = product.canonical_product_id || product.id;
+  const targetRuns = product.canonical_product_id ? db.prepare('SELECT * FROM product_pipeline_runs WHERE product_id = ? ORDER BY id ASC').all(targetId) : runs;
 
   // Gather crawler results
-  const sources = db.prepare('SELECT * FROM product_sources WHERE product_id = ?').all(product.id);
+  const sources = db.prepare('SELECT * FROM product_sources WHERE product_id = ?').all(targetId);
   const crawlerData = sources.map(source => {
       const crawlResults = db.prepare('SELECT source_type, url, status, output_json, error_json FROM source_crawl_results WHERE product_source_id = ?').all(source.id);
       return {
@@ -436,11 +481,12 @@ app.get('/api/products/:id', (req, res) => {
       };
   }).filter(Boolean);
 
-  const extraction = db.prepare('SELECT extraction_json FROM product_extractions WHERE product_id = ? ORDER BY id DESC LIMIT 1').get(product.id);
+  const extraction = db.prepare('SELECT extraction_json FROM product_extractions WHERE product_id = ? ORDER BY id DESC LIMIT 1').get(targetId);
   const extractorJsonStr = extraction && extraction.extraction_json ? extraction.extraction_json : null;
   
   res.json({
     id: product.id,
+    batch_id: product.import_batch_id,
     mfg_part_num: product.mfg_part_num,
     part_desc: product.part_desc,
     job_status: jobStatus,
@@ -448,7 +494,7 @@ app.get('/api/products/:id', (req, res) => {
     overall_confidence: null,
     pipeline_events,
     input_json: product.input_json,
-    orchestration_json: runs.find(r => r.stage === 'orchestration')?.output_json || null,
+    orchestration_json: targetRuns.find(r => r.stage === 'orchestration')?.output_json || null,
     crawler_json: JSON.stringify(crawlerData),
     evidence_json: JSON.stringify(evidenceData),
     extractor_json: extractorJsonStr,
@@ -503,7 +549,10 @@ app.post('/api/products/:id/re-enrich', (req, res) => {
       // 3. Reset pipeline state to initial states
       const insertRun = db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
       insertRun.run(productId, 'input', 'done', now, now, now);
-      insertRun.run(productId, 'orchestration', 'pending', now, null, now);
+      insertRun.run(productId, 'deduplicator', 'pending', now, null, now);
+      
+      // Detach if it was a duplicate
+      db.prepare("UPDATE products SET canonical_product_id = NULL WHERE id = ?").run(productId);
     })();
     
     // 4. Respond to frontend immediately
