@@ -63,7 +63,7 @@ export async function tieredProductSearch(domain, normalizedProduct, sourceRole)
       try {
         results = await search(queryObj.text);
       } catch (err) {
-        console.error(`Search error for query: ${query}`, err.message);
+        console.error(`Search error for query: ${queryObj.text}`, err.message);
         continue;
       }
       
