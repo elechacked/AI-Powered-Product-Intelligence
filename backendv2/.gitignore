@@ -5,3 +5,10 @@ storage/
 *.js.map
 .env
 .env.*
+
+architecture_summary.md
+LICENSE
+products.db.bak
+products_fresh.db
+products.db
+examples
