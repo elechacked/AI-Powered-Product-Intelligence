@@ -28,8 +28,16 @@ Add your `GEMINI_API_KEY` and `GROQ_API_KEY` (and `SERPER_API_KEY` if needed) to
 
 ### 2. Backend Setup
 
+The backend relies on a custom standalone crawler engine that must be built first.
+
 ```bash
-cd backendv2
+# Build the engine
+cd backendv2/engine
+npm install
+npm run build
+
+# Setup the backend
+cd ..
 npm install
 # Note: Playwright requires browsers to be installed
 npx playwright install
@@ -52,7 +60,7 @@ Start the application by running the backend and frontend separately.
 cd backendv2
 node --env-file=.env server.mjs
 ```
-The backend API will run on `http://localhost:8000`.
+The backend API will run on `http://localhost:9100`.
 
 ### Start Frontend
 
@@ -61,7 +69,7 @@ cd frontend
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:5173` (or as specified by Vite).
+The frontend will be available at `http://localhost:4174`.
 
 ## Demo Instructions
 

@@ -15,7 +15,25 @@ import { processValidator } from './pipeline/validator/agent.mjs';
 import { executePipelineForProducts, recoverStaleProducts } from './pipeline/orchestration/product_worker_pool.mjs';
 
 const app = express();
-app.use(cors());
+const allowedOrigins = [
+  'https://product-intelligence.pska.org.in',
+  'http://127.0.0.1:4174',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.startsWith('http://localhost:')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -494,8 +512,9 @@ app.post('/api/products/:id/re-enrich', (req, res) => {
 
     // 2. Clear out all downstream data in a transaction
     db.transaction(() => {
-      // Clear product URL cache to force a fresh search!
+      // Clear caches to force a fresh search!
       db.prepare("DELETE FROM product_url_cache WHERE normalized_mfg_part_num = ? AND url_status = 'not_found'").run(product.mfg_part_num.toLowerCase().trim());
+      db.prepare("DELETE FROM company_domain_cache WHERE status = 'not_found' OR status = 'failed'").run();
       
       // Delete derived data
       db.prepare("DELETE FROM product_extractions WHERE product_id = ?").run(productId);
@@ -600,6 +619,7 @@ app.get('/api/export', async (req, res) => {
   }
 });
 
-app.listen(8000, () => {
-  console.log('Server running on port 8000');
+const PORT = process.env.PORT || 9100;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

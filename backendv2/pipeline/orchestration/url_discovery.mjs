@@ -205,18 +205,26 @@ export async function findProductUrlsOnDomain(domain, mpn) {
 export function extractSources(normalizedProduct) {
   const sources = [];
   
-  if (normalizedProduct.part_manuf?.company_name) {
-    sources.push({ name: normalizedProduct.part_manuf.company_name, role: 'part_manuf' });
+  const part_manuf_name = normalizedProduct.part_manuf?.company_name || normalizedProduct.part_manuf_company_name;
+  if (part_manuf_name) {
+    sources.push({ name: part_manuf_name, role: 'part_manuf' });
   }
-  if (normalizedProduct.brand_hints?.e1_brand) {
-    sources.push({ name: normalizedProduct.brand_hints.e1_brand, role: 'e1_brand' });
+  
+  const e1 = normalizedProduct.brand_hints?.e1_brand || normalizedProduct.e1_brand;
+  if (e1) {
+    sources.push({ name: e1, role: 'e1_brand' });
   }
-  if (normalizedProduct.brand_hints?.unilog_brand) {
-    sources.push({ name: normalizedProduct.brand_hints.unilog_brand, role: 'unilog_brand' });
+  
+  const unilog = normalizedProduct.brand_hints?.unilog_brand || normalizedProduct.unilog_brand;
+  if (unilog) {
+    sources.push({ name: unilog, role: 'unilog_brand' });
   }
-  if (normalizedProduct.brand_hints?.dib_brand) {
-    sources.push({ name: normalizedProduct.brand_hints.dib_brand, role: 'dib_brand' });
+  
+  const dib = normalizedProduct.brand_hints?.dib_brand || normalizedProduct.dib_brand;
+  if (dib) {
+    sources.push({ name: dib, role: 'dib_brand' });
   }
+  
   if (normalizedProduct.part_desc) {
     const parts = normalizedProduct.part_desc.split(' ');
     let brandCandidate = parts[0].replace(/[^a-zA-Z0-9-]/g, '');

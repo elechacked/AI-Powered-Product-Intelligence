@@ -160,13 +160,13 @@ export async function processValidator(productId, db) {
         // --- New Nuanced Confidence Calculation ---
         let score = 0.0;
         if (pa.is_inferred !== 1) {
-            score = 0.70; // Direct extraction base
+            score = 0.85; // Direct extraction base (per rules expectation)
         } else {
-            score = 0.45; // Inferred base
+            score = 0.70; // Inferred base
         }
 
         if (hasManufSource) {
-            score += 0.15; // High-quality official source bonus
+            score += 0.10; // High-quality official source bonus
         }
         
         // Count total independent sources providing this attribute
@@ -185,10 +185,6 @@ export async function processValidator(productId, db) {
             } else {
                 score -= 0.15; // Minor conflict
             }
-        }
-        
-        if (isWeakSource) {
-            score -= 0.10; // Weak/low-quality source penalty
         }
 
         score = Math.max(0.0, Math.min(1.0, score));

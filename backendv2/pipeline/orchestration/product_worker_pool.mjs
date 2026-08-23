@@ -145,6 +145,7 @@ async function processProduct(p) {
         
         if (orchestrationResult.length === 0) {
             db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(JSON.stringify({ status: 'no_sources_found' }), doneTime, doneTime, p.id);
+            db.prepare("DELETE FROM product_pipeline_runs WHERE product_id = ? AND stage IN ('crawler','evidence_sanitization','extractor','classifier','attribute_taxonomy','normalizer','writer','validator')").run(p.id);
             ['crawler', 'evidence_sanitization', 'extractor', 'classifier', 'attribute_taxonomy', 'normalizer', 'writer', 'validator'].forEach(stage => {
                 db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, ?, 'skipped', ?, ?, ?)").run(p.id, stage, doneTime, doneTime, doneTime);
             });
@@ -153,7 +154,8 @@ async function processProduct(p) {
 
         validSources = orchestrationResult.filter(s => s.product_url && s.url_status === 'success');
         if (validSources.length === 0) {
-            db.prepare("UPDATE product_pipeline_runs SET error_json = ? WHERE product_id = ? AND stage = 'orchestration'").run(JSON.stringify({error: 'not_found'}), p.id);
+            db.prepare("UPDATE product_pipeline_runs SET status = 'done', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(JSON.stringify({error: 'not_found'}), doneTime, doneTime, p.id);
+            db.prepare("DELETE FROM product_pipeline_runs WHERE product_id = ? AND stage IN ('crawler','evidence_sanitization','extractor','classifier','attribute_taxonomy','normalizer','writer','validator')").run(p.id);
             ['crawler', 'evidence_sanitization', 'extractor', 'classifier', 'attribute_taxonomy', 'normalizer', 'writer', 'validator'].forEach(stage => {
                 db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, ?, 'skipped', ?, ?, ?)").run(p.id, stage, doneTime, doneTime, doneTime);
             });
