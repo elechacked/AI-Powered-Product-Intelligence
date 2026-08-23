@@ -498,22 +498,58 @@ app.get('/api/upload/batches/:batchId', (req, res) => {
   res.json({ total, pending, completed, pct_complete: pct });
 });
 
-app.get('/api/categories', (req, res) => {
-  try {
-    const nodes = db.prepare('SELECT id, parent_id, level, name, canonical_path FROM taxonomy_nodes').all();
-    const categories = nodes.map(n => ({
-      id: n.id,
-      name: n.name,
-      parent_id: n.parent_id,
-      classpath: n.canonical_path,
-      required_attributes: db.prepare('SELECT attribute_name as name FROM taxonomy_attributes WHERE taxonomy_id = ?').all(n.id).map(a => a.name)
-    }));
-    res.json(categories);
-  } catch (err) {
-    console.error('Error fetching categories:', err);
-    res.status(500).json({ error: 'Failed to fetch categories' });
-  }
-});
+  app.get('/api/categories', (req, res) => {
+    try {
+      const nodes = db.prepare('SELECT id, parent_id, level, name, canonical_path FROM taxonomy_nodes').all();
+      const categories = nodes.map(n => ({
+        id: n.id,
+        name: n.name,
+        parent_id: n.parent_id,
+        classpath: n.canonical_path,
+        required_attributes: db.prepare('SELECT attribute_name as name FROM taxonomy_attributes WHERE taxonomy_id = ?').all(n.id).map(a => a.name)
+      }));
+      res.json(categories);
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+      res.status(500).json({ error: 'Failed to fetch categories' });
+    }
+  });
+
+  app.get('/api/categories/:nodeId/attributes/:attrName/sources', (req, res) => {
+    const { nodeId, attrName } = req.params;
+    
+    const attr = db.prepare('SELECT id FROM taxonomy_attributes WHERE taxonomy_id = ? AND attribute_name = ?').get(nodeId, attrName);
+    if (!attr) return res.json([]);
+
+    const values = db.prepare(`
+      SELECT pa.provenance_json, p.part_desc, p.mfg_part_num, p.id as product_id
+      FROM product_attribute_values pa
+      JOIN products p ON pa.product_id = p.id
+      WHERE pa.taxonomy_attribute_id = ? AND pa.provenance_json IS NOT NULL
+    `).all(attr.id);
+
+    const results = [];
+    for (const v of values) {
+      let prov = [];
+      try { prov = JSON.parse(v.provenance_json); } catch(e){}
+      
+      const sources = db.prepare("SELECT source_url FROM product_sources WHERE product_id = ? AND status='done' ORDER BY id ASC LIMIT 1").get(v.product_id);
+      const product_url = sources ? sources.source_url : '';
+
+      for (const p of prov) {
+        results.push({
+            product_name: v.part_desc || v.mfg_part_num,
+            product_url: product_url,
+            source_name: p.source_name || '',
+            source_url: p.source_url || '',
+            reasoning: p.reasoning || '',
+            source_snippet: p.source_snippet || ''
+        });
+      }
+    }
+
+    res.json(results);
+  });
 
 app.get('/api/products', (req, res) => {
   const batchId = req.query.batch_id;
@@ -680,36 +716,39 @@ app.get('/api/products/:id', (req, res) => {
     })();
 
     const enriched_fields = [];
+    const primarySource = evidenceData && evidenceData.length > 0 ? evidenceData[0] : null;
+    const primaryUrl = primarySource ? (primarySource.source_url || primarySource.source_name) : '';
+
     if (product.manufacturer_name) {
-      enriched_fields.push({ field_name: 'Manufacturer Name', field_value: product.manufacturer_name });
+      enriched_fields.push({ field_name: 'Manufacturer Name', field_value: product.manufacturer_name, reasoning: 'Identified manufacturer of the product.', source_url: primaryUrl });
     }
     if (extractorJsonStr) {
       try {
         const extObj = JSON.parse(extractorJsonStr);
-        if (extObj.brand_name) enriched_fields.push({ field_name: 'Brand Name', field_value: extObj.brand_name });
-        if (extObj.trade_name) enriched_fields.push({ field_name: 'Trade Name', field_value: extObj.trade_name });
-        if (extObj.manufacturer_part_number) enriched_fields.push({ field_name: 'Manufacturer Part Number', field_value: extObj.manufacturer_part_number });
-        if (extObj.alternate_part_numbers && extObj.alternate_part_numbers.length > 0) enriched_fields.push({ field_name: 'Alternate Part Number', field_value: extObj.alternate_part_numbers.join(' | ') });
+        if (extObj.brand_name) enriched_fields.push({ field_name: 'Brand Name', field_value: extObj.brand_name, reasoning: 'Extracted brand name.', source_url: primaryUrl });
+        if (extObj.trade_name) enriched_fields.push({ field_name: 'Trade Name', field_value: extObj.trade_name, reasoning: 'Extracted trade name.', source_url: primaryUrl });
+        if (extObj.manufacturer_part_number) enriched_fields.push({ field_name: 'Manufacturer Part Number', field_value: extObj.manufacturer_part_number, reasoning: 'Extracted MPN.', source_url: primaryUrl });
+        if (extObj.alternate_part_numbers && extObj.alternate_part_numbers.length > 0) enriched_fields.push({ field_name: 'Alternate Part Number', field_value: extObj.alternate_part_numbers.join(' | '), reasoning: 'Extracted alternate part numbers.', source_url: primaryUrl });
       } catch(e){}
     }
     if (classJson) {
       try {
         const cObj = JSON.parse(classJson);
-        if (cObj.department) enriched_fields.push({ field_name: 'Dept', field_value: cObj.department });
-        if (cObj.class) enriched_fields.push({ field_name: 'Class', field_value: cObj.class });
-        if (cObj.fine) enriched_fields.push({ field_name: 'Fine', field_value: cObj.fine });
-        if (cObj.classpath) enriched_fields.push({ field_name: 'Classpath', field_value: cObj.classpath });
+        if (cObj.department) enriched_fields.push({ field_name: 'Dept', field_value: cObj.department, reasoning: 'AI Taxonomy classification (Department level).' });
+        if (cObj.class) enriched_fields.push({ field_name: 'Class', field_value: cObj.class, reasoning: 'AI Taxonomy classification (Class level).' });
+        if (cObj.fine) enriched_fields.push({ field_name: 'Fine', field_value: cObj.fine, reasoning: 'AI Taxonomy classification (Fine level).' });
+        if (cObj.classpath) enriched_fields.push({ field_name: 'Classpath', field_value: cObj.classpath, reasoning: 'Canonical taxonomy path.', is_inferred: true });
       } catch(e){}
     }
     if (writerJsonStr) {
       try {
         const wObj = JSON.parse(writerJsonStr);
-        if (wObj.invoice_description) enriched_fields.push({ field_name: 'Invoice Desc', field_value: wObj.invoice_description });
-        if (wObj.mobile_description) enriched_fields.push({ field_name: 'Mobile Desc', field_value: wObj.mobile_description });
-        if (wObj.short_description) enriched_fields.push({ field_name: 'Short Desc', field_value: wObj.short_description });
-        if (wObj.long_description) enriched_fields.push({ field_name: 'Long Desc', field_value: wObj.long_description });
-        if (wObj.retail_description) enriched_fields.push({ field_name: 'Retail Desc', field_value: wObj.retail_description });
-        if (wObj.marketing_description) enriched_fields.push({ field_name: 'Marketing Desc', field_value: wObj.marketing_description });
+        if (wObj.invoice_description) enriched_fields.push({ field_name: 'Invoice Desc', field_value: wObj.invoice_description, reasoning: 'Generated by AI Writer Agent.' });
+        if (wObj.mobile_description) enriched_fields.push({ field_name: 'Mobile Desc', field_value: wObj.mobile_description, reasoning: 'Generated by AI Writer Agent.' });
+        if (wObj.short_description) enriched_fields.push({ field_name: 'Short Desc', field_value: wObj.short_description, reasoning: 'Generated by AI Writer Agent.' });
+        if (wObj.long_description) enriched_fields.push({ field_name: 'Long Desc', field_value: wObj.long_description, reasoning: 'Generated by AI Writer Agent.' });
+        if (wObj.retail_description) enriched_fields.push({ field_name: 'Retail Desc', field_value: wObj.retail_description, reasoning: 'Generated by AI Writer Agent.' });
+        if (wObj.marketing_description) enriched_fields.push({ field_name: 'Marketing Desc', field_value: wObj.marketing_description, reasoning: 'Generated by AI Writer Agent.' });
       } catch(e){}
     }
     if (product_attributes_json) {
@@ -717,16 +756,23 @@ app.get('/api/products/:id', (req, res) => {
         if (pa.normalized_value) {
           let source_snippet = '';
           let reasoning = '';
+          let source_url = '';
           if (pa.provenance && pa.provenance.length > 0) {
             source_snippet = pa.provenance[0].source_snippet || '';
             reasoning = pa.provenance[0].reasoning || '';
+            source_url = pa.provenance[0].source_url || '';
+          }
+          let displayValue = pa.normalized_value;
+          if (pa.uom) {
+             displayValue = displayValue.replace(/[a-zA-Z\s]+$/, '').trim();
           }
           enriched_fields.push({
             field_name: pa.attribute_name,
-            field_value: pa.normalized_value,
+            field_value: displayValue,
             field_uom: pa.uom || '',
             source_snippet,
             reasoning,
+            source_url,
             is_inferred: pa.is_inferred
           });
         }

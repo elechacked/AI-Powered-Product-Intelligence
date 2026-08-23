@@ -445,7 +445,7 @@ function classifyLlmError(err: any): ExtractErrorType {
 function htmlToMarkdownStandalone(html: string): string {
     const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '*', strongDelimiter: '**' });
     turndown.use(gfm);
-    turndown.addRule('removeEmptyLinks', { filter: (node) => node.nodeName === 'A' && !node.textContent?.trim(), replacement: () => '' });
+    turndown.addRule('removeEmptyLinks', { filter: (node: any) => node.nodeName === 'A' && !node.textContent?.trim(), replacement: () => '' });
     return turndown.turndown(html).replace(/\n{3,}/g, '\n\n').trim();
 }
 

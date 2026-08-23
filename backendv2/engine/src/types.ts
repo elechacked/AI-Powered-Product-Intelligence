@@ -218,6 +218,10 @@ export interface PageData {
     html: string | null;
     /** Raw, unprocessed serialized HTML. Populated when extractRawHtml. */
     rawHtml: string | null;
+    /** Observability fields for fallback */
+    fallback_reason?: string;
+    playwright_success?: boolean;
+    baseline_recovered_after_playwright_failure?: boolean;
 }
 
 export interface CrawlResult {

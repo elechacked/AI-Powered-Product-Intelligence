@@ -75,6 +75,11 @@ export const fetchCategories = async () => {
   return data
 }
 
+export const fetchAttributeSources = async (nodeId: number, attrName: string) => {
+  const { data } = await api.get(`/api/categories/${nodeId}/attributes/${encodeURIComponent(attrName)}/sources`)
+  return data
+}
+
 export { api }
 
 export const fetchBatches = async () => {

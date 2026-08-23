@@ -698,6 +698,8 @@ export async function crawlStream(
 
     // --- Cache pre-pass: serve any URL we already have ---
     const urlsNeedingFetch: string[] = [];
+    const cheerioBaselines = new Map<string, { data: PageData, fallbackReason: string }>();
+    
     if (cache) {
         for (const url of urls) {
             const fullUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -812,7 +814,7 @@ export async function crawlStream(
             const mdHtml = $md.find('main, article, [role="main"]').html() || $md.find('body').html() || '';
             const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', emDelimiter: '*', strongDelimiter: '**' });
             turndown.use(gfm);
-            turndown.addRule('removeEmptyLinks', { filter: (node) => node.nodeName === 'A' && !node.textContent?.trim(), replacement: () => '' });
+            turndown.addRule('removeEmptyLinks', { filter: (node: any) => node.nodeName === 'A' && !node.textContent?.trim(), replacement: () => '' });
             let md = turndown.turndown(mdHtml).replace(/\n{3,}/g, '\n\n').trim();
             data.markdown = md.slice(0, 100000);
             if (chunkSize > 0 && md.length > 0) data.chunks = chunkText(md, chunkSize, chunkOverlap);
@@ -1076,6 +1078,234 @@ export async function crawlStream(
         }
     }
 
+    function countTechnicalEvidence(data: PageData, $: any | null): number {
+        let count = 0;
+        data.tables.forEach((t: any) => { count += t.rows.length; });
+        if ($) {
+            count += $('dl dt').length;
+            $('ul li, ol li').each((_i: any, el: any) => {
+                const text = $(el).text().trim();
+                if (/^[^:\-]{2,40}[:\-]\s+.+/.test(text)) count++;
+            });
+            $('[class*="spec"] > div, [class*="attr"] > div, [class*="feat"] > div, .row').each((_i: any, el: any) => {
+                const children = $(el).children();
+                if (children.length === 2) {
+                    const t1 = $(children.eq(0)).text().trim();
+                    const t2 = $(children.eq(1)).text().trim();
+                    if (t1 && t2 && t1.length < 50 && t2.length < 200) count++;
+                }
+            });
+        }
+        
+        const countStructured = (sd: any[]) => {
+            if (!Array.isArray(sd)) return 0;
+            let sdCount = 0;
+            const techKeys = new Set(['weight', 'width', 'height', 'depth', 'material', 'color', 'model', 'brand', 'sku', 'mpn']);
+            for (const item of sd) {
+                if (!item) continue;
+                const type = Array.isArray(item['@type']) ? item['@type'] : [item['@type']];
+                if (type.includes('Product')) {
+                    for (const k of Object.keys(item)) {
+                        if (techKeys.has(k.toLowerCase())) sdCount++;
+                    }
+                    if (Array.isArray(item.additionalProperty)) {
+                        sdCount += item.additionalProperty.length;
+                    }
+                }
+            }
+            return sdCount;
+        };
+
+        count += countStructured(data.structuredData);
+        count += countStructured(data.microdata);
+        if (Array.isArray(data.commerceData)) {
+            data.commerceData.forEach((c: any) => {
+                if (c.specs && Array.isArray(c.specs)) count += c.specs.length;
+            });
+        }
+        return count;
+    }
+
+    function getTechnicalSectionCandidates($: any | null): number {
+        if (!$) return 0;
+        const elements = $('[role="tab"], button, details > summary, [data-toggle="tab"], [class*="tab"], [class*="accordion"]');
+        let count = 0;
+        const IGNORE = ['reviews', 'related products', 'recommended products', 'accessories', 'downloads', 'videos', 'support'];
+        
+        elements.each((_i: any, el: any) => {
+            const text = $(el).text().trim().toLowerCase();
+            if (!text || text.length > 50) return;
+            if (IGNORE.some(i => text.includes(i))) return;
+            
+            let priority = 0;
+            if (text === 'technical details' || text === 'technical specifications') priority = 100;
+            else if (text === 'specifications' || text === 'technical data' || text === 'product specifications') priority = 95;
+            else if (text === 'product details' || text.includes('technical') || text.includes('spec')) priority = 80;
+            
+            if (priority >= 80) count++;
+        });
+        return count;
+    }
+
+    function mergePageData(base: PageData, newRes: PageData): PageData {
+        const merged = { ...base };
+        
+        const oldTableKeys = new Set(base.tables.map((t: any) => JSON.stringify(t)));
+        const mergedTables = [...base.tables];
+        for (const t of newRes.tables) {
+            if (!oldTableKeys.has(JSON.stringify(t))) {
+                mergedTables.push(t);
+            }
+        }
+        merged.tables = mergedTables;
+        
+        if (newRes.text && base.text) {
+            const oldLines = new Set(base.text.split('\n').map((l: string) => l.trim()));
+            const added: string[] = [];
+            for (const line of newRes.text.split('\n')) {
+                if (line.trim().length > 0 && !oldLines.has(line.trim())) {
+                    added.push(line);
+                }
+            }
+            if (added.length > 0) merged.text += '\n' + added.join('\n');
+        } else if (!base.text && newRes.text) {
+            merged.text = newRes.text;
+        }
+
+        if (newRes.markdown && base.markdown) {
+            const oldMdLines = new Set(base.markdown.split('\n').map((l: string) => l.trim()));
+            const addedMd: string[] = [];
+            for (const line of newRes.markdown.split('\n')) {
+                if (line.trim().length > 0 && !oldMdLines.has(line.trim())) {
+                    addedMd.push(line);
+                }
+            }
+            if (addedMd.length > 0) merged.markdown += '\n' + addedMd.join('\n');
+        } else if (!base.markdown && newRes.markdown) {
+            merged.markdown = newRes.markdown;
+        }
+        
+        if (newRes.html && base.html && newRes.html.length > base.html.length) merged.html = newRes.html;
+        if (newRes.rawHtml && base.rawHtml && newRes.rawHtml.length > base.rawHtml.length) merged.rawHtml = newRes.rawHtml;
+        
+        if (newRes.images && newRes.images.length > 0) {
+            const seen = new Set((base.images || []).map(i => i.src));
+            const newImg = [...(base.images || [])];
+            for (const i of newRes.images) {
+                if (!seen.has(i.src)) newImg.push(i);
+            }
+            merged.images = newImg;
+        }
+        return merged;
+    }
+
+    async function applyHiddenTabExtraction(page: any, data: PageData, request: any, respHeaders: any, response: any, startTime: number, computedHits: any[], $: any) {
+        let technicalAttributesBefore = countTechnicalEvidence(data, $);
+
+        if (technicalAttributesBefore >= 5) {
+            log.info('Targeted Extraction Stats', {
+                raw_interactive_candidates: 0,
+                unique_section_candidates: 0,
+                relevant_technical_candidates: [],
+                technical_sections_opened: 0,
+                technical_attributes_before: technicalAttributesBefore,
+                technical_attributes_after: technicalAttributesBefore,
+                extra_latency_ms: 0
+            });
+            return data;
+        }
+
+        const t0 = Date.now();
+        const stats = await page.evaluate(async () => {
+            const elements = Array.from(document.querySelectorAll('[role="tab"], button, details > summary, [data-toggle="tab"], [class*="tab"], [class*="accordion"]')) as HTMLElement[];
+            
+            let raw_interactive_candidates = elements.length;
+            
+            const IGNORE = ['reviews', 'related products', 'recommended products', 'accessories', 'downloads', 'videos', 'support'];
+            
+            const targets: {el: HTMLElement, text: string, priority: number}[] = [];
+            for (const el of elements) {
+                const text = (el.textContent || '').trim();
+                const lower = text.toLowerCase();
+                if (!lower || lower.length > 50) continue;
+                if (IGNORE.some(i => lower.includes(i))) continue;
+                
+                let priority = 0;
+                if (lower === 'technical details' || lower === 'technical specifications') priority = 100;
+                else if (lower === 'specifications' || lower === 'technical data' || lower === 'product specifications') priority = 95;
+                else if (lower === 'product details' || lower.includes('technical') || lower.includes('spec')) priority = 80;
+                else if (lower === 'details') priority = 40;
+                else if (lower === 'features') priority = 30;
+                else if (lower === 'product information') priority = 20;
+                
+                if (priority > 0) {
+                    targets.push({ el, text, priority });
+                }
+            }
+            
+            const seen = new Set();
+            const uniqueTargets = [];
+            for (const t of targets) {
+                const normalized = t.text.toLowerCase().replace(/\s+/g, ' ');
+                if (!seen.has(normalized)) {
+                    seen.add(normalized);
+                    uniqueTargets.push(t);
+                }
+            }
+            
+            uniqueTargets.sort((a, b) => b.priority - a.priority);
+            
+            let technical_sections_opened = 0;
+            const relevant_technical_candidates = [];
+            
+            for (const t of uniqueTargets) {
+                if (t.priority >= 80) {
+                    relevant_technical_candidates.push(t.text);
+                    if (technical_sections_opened < 2) {
+                        try {
+                            const expanded = t.el.getAttribute('aria-expanded') === 'true' || t.el.classList.contains('active');
+                            if (!expanded) {
+                                t.el.click();
+                                technical_sections_opened++;
+                                await new Promise(r => setTimeout(r, 800));
+                            }
+                        } catch (e) {}
+                    }
+                }
+            }
+            
+            return {
+                raw_interactive_candidates,
+                unique_section_candidates: uniqueTargets.length,
+                relevant_technical_candidates,
+                technical_sections_opened
+            };
+        });
+
+        let technicalAttributesAfter = technicalAttributesBefore;
+
+        if (stats.technical_sections_opened > 0) {
+            const newHtml = await page.content();
+            const new$ = cheerioLib.load(newHtml);
+            const newRes = await handlePage(request, new$, respHeaders, response?.status() ?? 200, respHeaders['content-type'] ?? null, startTime, computedHits);
+            
+            technicalAttributesAfter = countTechnicalEvidence(newRes.data, new$);
+            data = mergePageData(data, newRes.data);
+            
+            if (extractHtml) data.html = newRes.data.html;
+            if (extractRawHtml) data.rawHtml = newRes.data.rawHtml;
+        }
+
+        log.info('Targeted Extraction Stats', {
+            ...stats,
+            technical_attributes_before: technicalAttributesBefore,
+            technical_attributes_after: technicalAttributesAfter,
+            extra_latency_ms: Date.now() - t0
+        });
+
+        return data;
+    }
+
     if (htmlUrls.length === 0) return pagesScraped;
 
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1141,7 +1371,8 @@ export async function crawlStream(
                 const respHeaders: Record<string, string> = {};
                 for (const [k, v] of Object.entries(response?.headers() ?? {})) { respHeaders[k] = v; }
 
-                const { data, internalLinks } = await handlePage(request, $, respHeaders, response?.status() ?? 200, respHeaders['content-type'] ?? null, startTime, computedHits);
+                let { data, internalLinks } = await handlePage(request, $, respHeaders, response?.status() ?? 200, respHeaders['content-type'] ?? null, startTime, computedHits);
+                data = await applyHiddenTabExtraction(page, data, request, respHeaders, response, startTime, computedHits, $);
                 data.engine = 'playwright';
                 data.usedPlaywright = true;
                 data.screenshots = actionScreenshots;
@@ -1195,10 +1426,24 @@ export async function crawlStream(
                 if (adaptiveCrawling && data.status === 'success') {
                     const textLen = (data.text || '').length;
                     const hasSpaRoot = $('div#root, div#app, div#__next, div#__nuxt, div#__svelte').length > 0;
-                    if (textLen < 200 || (hasSpaRoot && textLen < 500)) {
-                        log.info(`Adaptive: SPA detected on ${request.url} (${textLen} chars), queuing for Playwright`);
-                        spaUrls.push({ url: request.loadedUrl || request.url, depth: (request.userData?.depth as number ?? 0) });
-                        return;
+                    const technicalAttributesBefore = countTechnicalEvidence(data, $);
+                    const techCandidates = getTechnicalSectionCandidates($);
+                    
+                    const isEmptySpa = hasSpaRoot && textLen < 500;
+                    const hasSparseEvidence = technicalAttributesBefore < 5;
+                    const hasTechCandidates = techCandidates > 0;
+                    
+                    const needsHiddenExtraction = hasSparseEvidence && hasTechCandidates;
+                    const needsPlaywright = isEmptySpa || needsHiddenExtraction || (textLen < 200);
+
+                    if (needsPlaywright) {
+                        const reason = isEmptySpa ? 'empty_spa' : (needsHiddenExtraction ? 'hidden_extraction_triggered' : 'short_text');
+                        log.info(`Adaptive: SPA or Sparse Tech Specs detected on ${request.url} (${textLen} chars, ${technicalAttributesBefore} tech attributes, ${techCandidates} tab candidates), queuing for Playwright (reason: ${reason})`);
+                        
+                        const urlKey = request.loadedUrl || request.url;
+                        cheerioBaselines.set(urlKey, { data, fallbackReason: reason });
+                        spaUrls.push({ url: urlKey, depth: (request.userData?.depth as number ?? 0) });
+                        return; // Defer emitting until Playwright is done
                     }
                 }
 
@@ -1237,22 +1482,36 @@ export async function crawlStream(
                     }
                 }],
                 async requestHandler({ request, page, response }: PlaywrightCrawlingContext) {
-                    if (pagesScraped >= maxPages) return; // overall page budget (shared with the cheerio pass)
                     const startTime = Date.now();
-                    if (waitForSelector) { try { await page.waitForSelector(waitForSelector, { timeout: effectiveWaitMs || 10000 }); } catch {} }
+                    if (waitForSelector) { try { await page.waitForSelector(waitForSelector as string, { timeout: effectiveWaitMs || 10000 }); } catch {} }
                     else { await page.waitForTimeout(effectiveWaitMs || 2000); }
                     const computedHits = extractBrand ? await sampleComputedColors(page) : [];
                     const html = await page.content();
                     const $ = cheerioLib.load(html);
                     const respHeaders: Record<string, string> = {};
                     for (const [k, v] of Object.entries(response?.headers() ?? {})) { respHeaders[k] = v; }
-                    const { data, internalLinks } = await handlePage(request, $, respHeaders, response?.status() ?? 200, respHeaders['content-type'] ?? null, startTime, computedHits);
+                    let { data, internalLinks } = await handlePage(request, $, respHeaders, response?.status() ?? 200, respHeaders['content-type'] ?? null, startTime, computedHits);
+                    
+                    const urlKey1 = request.url;
+                    const urlKey2 = request.loadedUrl || request.url;
+                    const baselineObj = cheerioBaselines.get(urlKey1) || cheerioBaselines.get(urlKey2);
+                    if (baselineObj) {
+                        cheerioBaselines.delete(urlKey1);
+                        cheerioBaselines.delete(urlKey2);
+                        data = mergePageData(baselineObj.data, data);
+                        data.fallback_reason = baselineObj.fallbackReason;
+                        data.baseline_recovered_after_playwright_failure = false;
+                        data.playwright_success = true;
+                    }
+
+                    data = await applyHiddenTabExtraction(page, data, request, respHeaders, response, startTime, computedHits, $);
                     data.engine = 'playwright';
                     data.usedPlaywright = true;
+                    
                     const rc: { url: string; statusCode: number }[] = [];
                     let rr = response?.request()?.redirectedFrom() ?? null;
-                    while (rr) { const rResp = await rr.response(); rc.unshift({ url: rr.url(), statusCode: rResp?.status() ?? 301 }); rr = rr.redirectedFrom(); }
-                    data.redirectChain = rc;
+                    while (rr) { const rResp = await rr?.response(); rc.unshift({ url: rr?.url() ?? '', statusCode: rResp?.status() ?? 301 }); rr = rr?.redirectedFrom() ?? null; }
+                    if (rc.length > 0) data.redirectChain = rc;
                     if (cache && data.status === 'success') cache.set(CrawlCache.keyFor(data.url, options), data);
                     await onPageData(data);
                     pagesScraped++;
@@ -1266,7 +1525,25 @@ export async function crawlStream(
                         }
                     }
                 },
-                async failedRequestHandler({ request }) { await failedHandler(request); },
+                async failedRequestHandler({ request }) { 
+                    const urlKey1 = request.url;
+                    const urlKey2 = request.loadedUrl || request.url;
+                    const baselineObj = cheerioBaselines.get(urlKey1) || cheerioBaselines.get(urlKey2);
+                    if (baselineObj) {
+                        cheerioBaselines.delete(urlKey1);
+                        cheerioBaselines.delete(urlKey2);
+                        log.info(`Playwright failed on ${request.url}, recovering Cheerio baseline.`);
+                        const data = baselineObj.data;
+                        data.playwright_success = false;
+                        data.baseline_recovered_after_playwright_failure = true;
+                        data.fallback_reason = baselineObj.fallbackReason;
+                        if (cache && data.status === 'success') cache.set(CrawlCache.keyFor(data.url, options), data);
+                        await onPageData(data);
+                        pagesScraped++;
+                    } else {
+                        await failedHandler(request); 
+                    }
+                },
             });
             await pwCrawler.run(spaUrls.map(s => makeRequest(s.url, s.depth)));
         }

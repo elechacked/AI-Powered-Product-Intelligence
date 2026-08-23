@@ -62,7 +62,7 @@ export async function processValidator(productId, db) {
     for (const [key, limit] of Object.entries(charLimits)) {
         const val = descRow[key];
         if (val && val.length > limit) {
-            addIssue(key.toUpperCase(), 'char_limit', 'high', `Value is ${val.length} chars, limit is ${limit}`, val.length, limit);
+            addIssue(key.toUpperCase(), 'char_limit', 'medium', `Value is ${val.length} chars, limit is ${limit}`, val.length, limit);
         }
     }
     
@@ -78,12 +78,14 @@ export async function processValidator(productId, db) {
     if (extRow && extRow.extraction_json) {
         try { brand = JSON.parse(extRow.extraction_json).brand_name; } catch(e){}
     }
-    if (!brand) addIssue('BRAND_NAME', 'completeness', 'high', 'Missing canonical extracted brand name');
+    if (!brand) addIssue('BRAND_NAME', 'completeness', 'medium', 'Missing canonical extracted brand name');
     
-    if (!classPath) addIssue('CLASSPATH', 'completeness', 'high', 'Missing taxonomy classification path');
-    if (!descRow.invoice_description) addIssue('INVOICE_DESCRIPTION', 'completeness', 'high', 'Missing invoice description');
-    if (!descRow.short_description) addIssue('SHORT_DESCRIPTION', 'completeness', 'high', 'Missing short description');
-    if (!descRow.long_description) addIssue('LONG_DESCRIPTION', 'completeness', 'high', 'Missing long description');
+    if (!classPath) addIssue('CLASSPATH', 'completeness', 'medium', 'Missing taxonomy classification path');
+    if (!descRow.invoice_description) addIssue('INVOICE_DESCRIPTION', 'completeness', 'medium', 'Missing invoice description');
+    if (!descRow.short_description) addIssue('SHORT_DESCRIPTION', 'completeness', 'medium', 'Missing short description');
+    if (!descRow.long_description) addIssue('LONG_DESCRIPTION', 'completeness', 'medium', 'Missing long description');
+    if (!descRow.marketing_description) addIssue('MARKETING_DESCRIPTION', 'completeness', 'medium', 'Missing marketing description');
+    if (!descRow.retail_description) addIssue('RETAIL_DESCRIPTION', 'completeness', 'medium', 'Missing retail description');
 
     // --- Attributes Validation ---
     const pAttrs = db.prepare(`
@@ -115,23 +117,23 @@ export async function processValidator(productId, db) {
             }
         }
         
-        // Casing rule
-        if (pa.normalized_value && pa.normalized_value !== pa.normalized_value.toUpperCase()) {
-            addIssue(pa.attribute_name, 'casing', 'medium', 'Value contains lowercase characters', pa.normalized_value);
-        }
+        // (Casing rule removed per user request)
 
         // Conflicts
         let fieldConflict = false;
         let localConflictSev = 'none';
         
         // "Detect scraped vs inferred conflicts" using is_inferred, extracted_value, normalized_value
-        // Correct conflict rule: Compare semantic meaning, not raw strings.
         const scrapedExtracted = pa.extracted_value || '';
         const finalNormalized = pa.normalized_value || '';
         const deterministicallyNormalized = normalizeValue(pa.attribute_name, scrapedExtracted).value || '';
         
-        const valA = deterministicallyNormalized.toLowerCase().trim();
-        const valB = finalNormalized.toLowerCase().trim();
+        function normalizeForComparison(value) {
+            return String(value).trim().replace(/\s+/g, ' ').toLowerCase();
+        }
+
+        const valA = normalizeForComparison(deterministicallyNormalized);
+        const valB = normalizeForComparison(finalNormalized);
         
         if (pa.is_inferred === 1 && valA && valB && valA !== valB) {
             fieldConflict = true;

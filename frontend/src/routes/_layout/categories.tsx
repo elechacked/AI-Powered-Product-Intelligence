@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
-import { fetchCategories } from '@/lib/api'
+import { fetchCategories, fetchAttributeSources } from '@/lib/api'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -10,6 +10,7 @@ import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ChevronRight, ChevronDown, Folder, FolderOpen, Tag } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 export const Route = createFileRoute('/_layout/categories')({
   component: CategoriesPage,
@@ -126,6 +127,87 @@ function CategoryNode({
   )
 }
 
+function AttributeSourcesDialog({ nodeId, attrName, open, onOpenChange }: { nodeId: number, attrName: string, open: boolean, onOpenChange: (open: boolean) => void }) {
+  const { data: sources, isLoading } = useQuery({
+    queryKey: ['attribute-sources', nodeId, attrName],
+    queryFn: () => fetchAttributeSources(nodeId, attrName),
+    enabled: open && !!nodeId && !!attrName,
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Sources for Attribute: {attrName}</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto pr-2 mt-4 space-y-4">
+          {isLoading ? (
+            <div className="space-y-4">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : sources && sources.length > 0 ? (
+            sources.map((s: any, idx: number) => (
+              <div key={idx} className="border rounded-md p-4 bg-muted/30">
+                <div className="grid grid-cols-2 gap-4 text-sm mb-3">
+                  <div>
+                    <span className="text-muted-foreground font-semibold">Product Name:</span>{' '}
+                    <span className="font-medium">{s.product_name || 'Unknown'}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground font-semibold">Source Name:</span>{' '}
+                    <span className="font-medium">{s.source_name || 'Unknown'}</span>
+                  </div>
+                </div>
+                
+                {s.product_url && (
+                  <div className="mb-2 text-sm truncate">
+                    <span className="text-muted-foreground font-semibold">Product URL:</span>{' '}
+                    <a href={s.product_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                      {s.product_url}
+                    </a>
+                  </div>
+                )}
+                
+                {s.source_url && (
+                  <div className="mb-2 text-sm truncate">
+                    <span className="text-muted-foreground font-semibold">Extracted from Source URL:</span>{' '}
+                    <a href={s.source_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">
+                      {s.source_url}
+                    </a>
+                  </div>
+                )}
+
+                {s.reasoning && (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Reasoning</div>
+                    <div className="text-sm bg-background p-2 rounded border">
+                      {s.reasoning}
+                    </div>
+                  </div>
+                )}
+                
+                {s.source_snippet && (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Source Snippet</div>
+                    <div className="text-xs font-mono bg-background p-2 rounded border-l-2 border-primary overflow-x-auto whitespace-pre">
+                      "{s.source_snippet}"
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="text-muted-foreground text-center py-8">
+              No specific source tracking found for this attribute.
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function CategoriesPage() {
   const {
     data: categories = [],
@@ -137,6 +219,7 @@ function CategoriesPage() {
   })
 
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null)
+  const [selectedAttr, setSelectedAttr] = useState<string | null>(null)
 
   const tree = useMemo(() => {
     if (!categories.length) return []
@@ -210,7 +293,11 @@ function CategoriesPage() {
                         const lov = isString ? null : attr.lov
 
                         return (
-                          <div key={idx} className="border rounded-md p-4 bg-background">
+                          <div 
+                            key={idx} 
+                            className="border rounded-md p-4 bg-background cursor-pointer hover:bg-muted/50 hover:border-primary transition-colors"
+                            onClick={() => setSelectedAttr(name)}
+                          >
                             <div className="font-medium text-sm mb-1">
                               {name}
                             </div>
@@ -252,6 +339,15 @@ function CategoriesPage() {
           </div>
         </div>
       </Main>
+      
+      {selectedNode && selectedAttr && (
+        <AttributeSourcesDialog 
+          nodeId={selectedNode.id} 
+          attrName={selectedAttr} 
+          open={!!selectedAttr} 
+          onOpenChange={(open) => !open && setSelectedAttr(null)} 
+        />
+      )}
     </>
   )
 }

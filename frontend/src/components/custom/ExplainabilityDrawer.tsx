@@ -43,6 +43,14 @@ export const ExplainabilityDrawer = ({ product }: { product?: any }) => {
                     </div>
                   </div>
                 )}
+                {field.source_url && (
+                  <div className='mt-1 text-[10px] text-muted-foreground'>
+                    Source:{' '}
+                    <a href={field.source_url} target='_blank' rel='noreferrer' className='text-blue-500 hover:underline'>
+                      {field.source_url}
+                    </a>
+                  </div>
+                )}
                 <div className='mt-3'>
                   <div className='text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1'>AI Reasoning</div>
                   <p className='text-xs text-foreground'>

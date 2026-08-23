@@ -3,34 +3,35 @@ import { db } from './orchestration/db.mjs';
 function cleanMarkdown(md) {
     if (!md) return "";
     let lines = md.split('\n');
+    if (lines.length === 1 && md.length > 500) {
+        // If it's a single giant line (e.g. squashed text), don't drop the whole thing
+        return md;
+    }
     let preserved = [];
     let noisePatterns = [
-        /skip to content/i,
-        /skip to footer/i,
-        /sign in/i,
-        /explore by categories/i,
-        /explore by category/i,
-        /cookie policy/i,
-        /privacy policy/i,
-        /terms of use/i,
-        /all rights reserved/i,
-        /do not sell my personal/i,
-        /website accessibility/i,
-        /dealer locator/i,
-        /recent saves/i,
-        /compare products/i,
-        /where to buy/i,
-        /scroll to top/i,
-        /be the first to ask/i,
-        /find a store/i,
+        /^skip to content$/i,
+        /^skip to footer$/i,
+        /^sign in$/i,
+        /^explore by categories$/i,
+        /^explore by category$/i,
+        /^cookie policy$/i,
+        /^privacy policy$/i,
+        /^terms of use$/i,
+        /^all rights reserved$/i,
+        /^do not sell my personal$/i,
+        /^website accessibility$/i,
+        /^dealer locator$/i,
+        /^recent saves$/i,
+        /^compare products$/i,
+        /^where to buy$/i,
+        /^scroll to top$/i,
+        /^be the first to ask$/i,
+        /^find a store$/i,
         /^menu$/i,
         /^home$/i,
         /^cart$/i,
         /^search$/i,
         /^account$/i,
-        /^contact us$/i,
-        /^about us$/i,
-        /^careers$/i
     ];
 
     let lastLine = "";

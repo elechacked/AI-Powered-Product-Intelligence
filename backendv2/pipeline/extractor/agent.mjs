@@ -42,6 +42,9 @@ function buildUserPrompt(productInfo, evidences) {
              prompt += `Data from URL: ${crawl.url}\n`;
              if (data.metadata && data.metadata.description) prompt += `Meta Desc: ${data.metadata.description}\n`;
              if (data.markdown) prompt += `Markdown Content:\n${data.markdown}\n`;
+             if (data.text && (!data.markdown || data.text.length > data.markdown.length)) {
+                 prompt += `Raw Text Content:\n${data.text.substring(0, 20000)}\n`;
+             }
              
              if (data.tables && data.tables.length > 0) {
                  prompt += `Tables:\n${JSON.stringify(data.tables, null, 2)}\n`;
