@@ -32,8 +32,6 @@ temp/
 
 AGENTS.md
 IMPLEMENTATION_PLAN.md
-docs
-data
 backendv2/products.db
 backendv2/products.db.bak
 backendv2/architecture_summary.md
