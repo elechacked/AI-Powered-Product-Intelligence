@@ -13,7 +13,8 @@ const BLOCKED_DOMAINS = new Set([
   "target.com", "aliexpress.com", "alibaba.com", "grainger.com", "mcmaster.com",
   "mouser.com", "digikey.com", "fastenal.com", "wikipedia.org", "facebook.com",
   "twitter.com", "linkedin.com", "instagram.com", "youtube.com", "reddit.com",
-  "pinterest.com", "duckduckgo.com", "google.com", "bing.com"
+  "pinterest.com", "duckduckgo.com", "google.com", "bing.com",
+  "ubuy.com", "ubuy.co.in", "ubuy.ae", "indiamart.com", "tradeindia.com", "exportersindia.com"
 ]);
 
 // ─── Core Logic ──────────────────────────────────────────────────────────────
@@ -49,6 +50,8 @@ function scoreDomainCandidate(companyName, item) {
     score += 0.8; // Exact domain name match (e.g. 3m == 3m.com)
   } else if (slug.length > 2 && hostname.includes(slug)) {
     score += 0.7; // Strong signal: brand is in the root domain name
+  } else if (slug.length > 2 && domainName.length >= 3 && (slug.includes(domainName) || domainName.includes(slug))) {
+    score += 0.7; // Strong signal: brand part matches domain name (e.g. mirkaabrasives -> mirka.com)
   } else if (coreName.length > 2 && item.url.toLowerCase().includes(coreName.replace(/\s+/g, '-'))) {
     score += 0.1; // Weak signal: brand is just in the URL path (could be a reseller)
   }

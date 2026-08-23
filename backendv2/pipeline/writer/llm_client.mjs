@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+import { extractJsonObject } from '../utils.mjs';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -82,7 +83,7 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
 
             const latency_ms = Date.now() - startTime;
             const rawText = response.text;
-            const parsed = JSON.parse(rawText);
+            const parsed = extractJsonObject(rawText);
 
             const prompt_tokens = response.usageMetadata?.promptTokenCount || 0;
             const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;

@@ -371,8 +371,12 @@ async function executePipelineForProducts(insertedProducts) {
                 now, now
             );
             
-            if (result.parsed.manufacturer_name) {
-                db.prepare("UPDATE products SET manufacturer_name = ? WHERE id = ?").run(result.parsed.manufacturer_name, p.product_id);
+            let finalManufacturerName = result.parsed.manufacturer_name;
+            if (!finalManufacturerName && p.part_manuf_company_name) {
+                finalManufacturerName = p.part_manuf_company_name;
+            }
+            if (finalManufacturerName) {
+                db.prepare("UPDATE products SET manufacturer_name = ? WHERE id = ?").run(finalManufacturerName, p.product_id);
             }
 
             db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
@@ -513,9 +517,12 @@ app.get('/api/categories', (req, res) => {
 
 app.get('/api/products', (req, res) => {
   const batchId = req.query.batch_id;
-  let query = 'SELECT * FROM products';
+  const confMin = req.query.confidence_min;
+  
+  let query = 'SELECT * FROM products WHERE 1=1';
   const params = [];
-  if (batchId) { query += ' WHERE import_batch_id = ?'; params.push(batchId); }
+  if (batchId) { query += ' AND import_batch_id = ?'; params.push(batchId); }
+  if (confMin) { query += ' AND overall_confidence >= ?'; params.push(parseFloat(confMin)); }
   query += ' ORDER BY id DESC LIMIT 50';
   const rows = db.prepare(query).all(...params);
   
@@ -535,9 +542,7 @@ app.get('/api/products', (req, res) => {
       part_desc: r.part_desc,
       job_status: jobStatus,
       commerce_ready: r.commerce_ready === 1,
-      confidence_scores: {
-        overall_confidence: r.overall_confidence
-      }
+      overall_confidence: r.overall_confidence
     };
   });
   res.json({ items, total: rows.length });
@@ -594,6 +599,17 @@ app.get('/api/products/:id', (req, res) => {
           error_json: evi.error_json ? JSON.parse(evi.error_json) : null
       };
   }).filter(Boolean);
+
+  let scraped_text = '';
+  evidenceData.forEach(ev => {
+    if (ev.evidence_json && ev.evidence_json.crawls) {
+      ev.evidence_json.crawls.forEach(crawl => {
+        if (crawl.data && crawl.data.markdown) {
+          scraped_text += `\n\n--- Source: ${ev.source_url || ev.source_name} ---\n\n${crawl.data.markdown}`;
+        }
+      });
+    }
+  });
 
   const extraction = db.prepare('SELECT extraction_json FROM product_extractions WHERE product_id = ? ORDER BY id DESC LIMIT 1').get(targetId);
   const extractorJsonStr = extraction && extraction.extraction_json ? extraction.extraction_json : null;
@@ -656,6 +672,67 @@ app.get('/api/products/:id', (req, res) => {
 
     const validation_issues = db.prepare('SELECT field_name, issue_type, severity, description, value_a, value_b FROM validation_issues WHERE product_id = ?').all(targetId);
 
+    const writerJsonStr = (() => {
+      try {
+        const wd = db.prepare('SELECT * FROM product_descriptions WHERE product_id = ?').get(targetId);
+        return wd ? JSON.stringify(wd) : (targetRuns.find(r => r.stage === 'writer')?.output_json || null);
+      } catch(e) { return null; }
+    })();
+
+    const enriched_fields = [];
+    if (product.manufacturer_name) {
+      enriched_fields.push({ field_name: 'Manufacturer Name', field_value: product.manufacturer_name });
+    }
+    if (extractorJsonStr) {
+      try {
+        const extObj = JSON.parse(extractorJsonStr);
+        if (extObj.brand_name) enriched_fields.push({ field_name: 'Brand Name', field_value: extObj.brand_name });
+        if (extObj.trade_name) enriched_fields.push({ field_name: 'Trade Name', field_value: extObj.trade_name });
+        if (extObj.manufacturer_part_number) enriched_fields.push({ field_name: 'Manufacturer Part Number', field_value: extObj.manufacturer_part_number });
+        if (extObj.alternate_part_numbers && extObj.alternate_part_numbers.length > 0) enriched_fields.push({ field_name: 'Alternate Part Number', field_value: extObj.alternate_part_numbers.join(' | ') });
+      } catch(e){}
+    }
+    if (classJson) {
+      try {
+        const cObj = JSON.parse(classJson);
+        if (cObj.department) enriched_fields.push({ field_name: 'Dept', field_value: cObj.department });
+        if (cObj.class) enriched_fields.push({ field_name: 'Class', field_value: cObj.class });
+        if (cObj.fine) enriched_fields.push({ field_name: 'Fine', field_value: cObj.fine });
+        if (cObj.classpath) enriched_fields.push({ field_name: 'Classpath', field_value: cObj.classpath });
+      } catch(e){}
+    }
+    if (writerJsonStr) {
+      try {
+        const wObj = JSON.parse(writerJsonStr);
+        if (wObj.invoice_description) enriched_fields.push({ field_name: 'Invoice Desc', field_value: wObj.invoice_description });
+        if (wObj.mobile_description) enriched_fields.push({ field_name: 'Mobile Desc', field_value: wObj.mobile_description });
+        if (wObj.short_description) enriched_fields.push({ field_name: 'Short Desc', field_value: wObj.short_description });
+        if (wObj.long_description) enriched_fields.push({ field_name: 'Long Desc', field_value: wObj.long_description });
+        if (wObj.retail_description) enriched_fields.push({ field_name: 'Retail Desc', field_value: wObj.retail_description });
+        if (wObj.marketing_description) enriched_fields.push({ field_name: 'Marketing Desc', field_value: wObj.marketing_description });
+      } catch(e){}
+    }
+    if (product_attributes_json) {
+      product_attributes_json.forEach(pa => {
+        if (pa.normalized_value) {
+          let source_snippet = '';
+          let reasoning = '';
+          if (pa.provenance && pa.provenance.length > 0) {
+            source_snippet = pa.provenance[0].source_snippet || '';
+            reasoning = pa.provenance[0].reasoning || '';
+          }
+          enriched_fields.push({
+            field_name: pa.attribute_name,
+            field_value: pa.normalized_value,
+            field_uom: pa.uom || '',
+            source_snippet,
+            reasoning,
+            is_inferred: pa.is_inferred
+          });
+        }
+      });
+    }
+
     res.json({
     id: product.id,
     batch_id: product.import_batch_id,
@@ -667,11 +744,12 @@ app.get('/api/products/:id', (req, res) => {
     validation_status: product.validation_status,
     manufacturer_name: product.manufacturer_name,
     product_attributes_json,
+    enriched_fields,
     confidence_scores: {
         extraction_confidence,
         classification_confidence,
-        validation_confidence: null,
-        overall_confidence: null
+        validation_confidence: product.overall_confidence,
+        overall_confidence: product.overall_confidence
     },
     validation_issues,
     pipeline_events,
@@ -682,13 +760,9 @@ app.get('/api/products/:id', (req, res) => {
     extractor_json: extractorJsonStr,
     classifier_json: (product.canonical_product_id ? db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.canonical_product_id) : db.prepare('SELECT classification_json FROM product_classifications WHERE product_id = ?').get(product.id))?.classification_json || null,
     normalizer_json: targetRuns.find(r => r.stage === 'normalizer')?.output_json || null,
-    writer_json: (() => {
-      try {
-        const wd = db.prepare('SELECT * FROM product_descriptions WHERE product_id = ?').get(targetId);
-        return wd ? JSON.stringify(wd) : (targetRuns.find(r => r.stage === 'writer')?.output_json || null);
-      } catch(e) { return null; }
-    })(),
-    error_message: runs.find(r => r.status === 'failed')?.error_json || null
+    writer_json: writerJsonStr,
+    error_message: runs.find(r => r.status === 'failed')?.error_json || null,
+    scraped_text
   });
 });
 

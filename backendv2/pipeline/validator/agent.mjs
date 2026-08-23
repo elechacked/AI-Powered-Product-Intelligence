@@ -111,8 +111,13 @@ export async function processValidator(productId, db) {
         // Dimensional / UOM Rule
         if (pa.is_dimensional === 1 && pa.normalized_value) {
             if (!uomRegex.test(pa.normalized_value)) {
-                addIssue(pa.attribute_name, 'uom_spacing', 'high', 'Value does not match required number + space + unit format', pa.normalized_value);
+                addIssue(pa.attribute_name, 'uom_spacing', 'medium', 'Value does not match required number + space + unit format', pa.normalized_value);
             }
+        }
+        
+        // Casing rule
+        if (pa.normalized_value && pa.normalized_value !== pa.normalized_value.toUpperCase()) {
+            addIssue(pa.attribute_name, 'casing', 'medium', 'Value contains lowercase characters', pa.normalized_value);
         }
 
         // Conflicts

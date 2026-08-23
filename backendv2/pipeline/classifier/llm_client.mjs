@@ -1,6 +1,7 @@
 import { Groq } from 'groq-sdk';
 import { GoogleGenAI, Type } from '@google/genai';
 import { db } from '../orchestration/db.mjs';
+import { extractJsonObject } from '../utils.mjs';
 
 const PRIMARY_MODEL = 'qwen/qwen3.6-27b';
 const FALLBACK_MODEL = 'gemma-4-31b-it';
@@ -55,7 +56,7 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
             logLlmCall('Classifier', PRIMARY_MODEL, productId, completion.usage?.prompt_tokens, completion.usage?.completion_tokens, userPrompt, responseText, systemPrompt, latencyMs);
 
             // Parse JSON to ensure validity
-            const parsed = JSON.parse(responseText);
+            const parsed = extractJsonObject(responseText);
             return {
                 data: parsed,
                 raw: responseText,
@@ -86,7 +87,7 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
             const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
             logLlmCall('Classifier', FALLBACK_MODEL, productId, prompt_tokens, completion_tokens, userPrompt, responseText, systemPrompt, latencyMs);
             
-            const parsed = JSON.parse(responseText);
+            const parsed = extractJsonObject(responseText);
             return {
                 data: parsed,
                 raw: responseText,

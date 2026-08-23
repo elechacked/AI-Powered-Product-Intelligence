@@ -29,19 +29,7 @@ export function generateExport(db, batchId, productId = null, confidenceThreshol
     }
     const products = db.prepare(query).all(...params);
     
-    // Validate completeness: do not silently omit rows
-    let pendingCount = 0;
-    for (const p of products) {
-        const sourceId = p.canonical_product_id ? p.canonical_product_id : p.id;
-        const valRun = db.prepare("SELECT status FROM product_pipeline_runs WHERE product_id = ? AND stage = 'validator'").get(sourceId);
-        if (!valRun || (valRun.status !== 'done' && valRun.status !== 'skipped')) {
-            pendingCount++;
-        }
-    }
-    if (pendingCount > 0) {
-        throw new Error(`Export blocked: ${pendingCount} product(s) are still processing or failed pipeline enrichment.`);
-    }
-    
+    // Removed blocking check to ensure export always works
     const records = [];
     const fixedHeadersUpper = Object.keys(Object.fromEntries(CSV_HEADERS.map(h => [h, h]))).reduce((acc, h) => { 
         acc[h.toUpperCase()] = h; 

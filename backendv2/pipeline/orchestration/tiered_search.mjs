@@ -35,16 +35,18 @@ export async function tieredProductSearch(domain, normalizedProduct, sourceRole)
   // Rule based on source_role
   if (sourceRole === 'part_manuf' || sourceRole === 'distributor') {
     queries.push({ text: `site:${domain} "${sku}"`, match_type: 'exact' });
-    if (descFingerprint) queries.push({ text: `site:${domain} "${descFingerprint}"`, match_type: 'description_match' });
+    queries.push({ text: `site:${domain} ${sku}`, match_type: 'broad_sku' });
+    if (descFingerprint) queries.push({ text: `site:${domain} ${descFingerprint}`, match_type: 'description_match' });
   } else if (sourceRole === 'desc_heuristic' || sourceRole.includes('brand')) {
-    if (descFingerprint) queries.push({ text: `site:${domain} "${descFingerprint}"`, match_type: 'description_match' });
+    if (descFingerprint) queries.push({ text: `site:${domain} ${descFingerprint}`, match_type: 'description_match' });
     queries.push({ text: `site:${domain} "${sku}"`, match_type: 'exact' });
+    queries.push({ text: `site:${domain} ${sku}`, match_type: 'broad_sku' });
   } else {
     queries.push({ text: `site:${domain} "${sku}"`, match_type: 'exact' });
-    if (descFingerprint) queries.push({ text: `site:${domain} "${descFingerprint}"`, match_type: 'description_match' });
+    if (descFingerprint) queries.push({ text: `site:${domain} ${descFingerprint}`, match_type: 'description_match' });
   }
   
-  // Deduplicate queries and limit to max 2
+  // Deduplicate queries and limit to max 3
   const seenQueries = new Set();
   const uniqueQueries = [];
   for (const q of queries) {
@@ -53,7 +55,7 @@ export async function tieredProductSearch(domain, normalizedProduct, sourceRole)
           uniqueQueries.push(q);
       }
   }
-  const finalQueries = uniqueQueries.slice(0, 2);
+  const finalQueries = uniqueQueries.slice(0, 3);
   
   for (const queryObj of finalQueries) {
       console.log(`[Tiered Search] Trying query: ${queryObj.text}`);

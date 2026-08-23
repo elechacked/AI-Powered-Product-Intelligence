@@ -183,7 +183,7 @@ export async function processAttributeTaxonomy(productId, db) {
     const finalResult = {
         taxonomy_id: taxId,
         taxonomy_path: taxPath,
-        status: "completed",
+        status: "done",
         attributes_processed: processed,
         attributes_created: aCreated,
         attributes_reused: aReused,

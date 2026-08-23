@@ -154,8 +154,8 @@ export function ProductDetail() {
                   </Badge>
 
                   {/* Confidence badge — only when we have a score */}
-                  {typeof product.overall_confidence === 'number' && (
-                    <ConfidenceBadge confidence={product.overall_confidence} />
+                  {typeof (product.overall_confidence ?? product.confidence_scores?.overall_confidence) === 'number' && (
+                    <ConfidenceBadge confidence={product.overall_confidence ?? product.confidence_scores?.overall_confidence} />
                   )}
 
                   {/* Commerce ready pill */}
@@ -236,9 +236,6 @@ export function ProductDetail() {
                   </TabsTrigger>
                   <TabsTrigger className='flex-1' value='classifier'>
                     Classifier JSON
-                  </TabsTrigger>
-                  <TabsTrigger className='flex-1' value='product_attributes'>
-                    Attributes JSON
                   </TabsTrigger>
                   <TabsTrigger className='flex-1' value='taxonomy'>
                     Attribute Taxonomy
@@ -341,12 +338,12 @@ export function ProductDetail() {
                     </pre>
                   </div>
                 </TabsContent>
-                <TabsContent value='product_attributes'>
+                <TabsContent value='taxonomy'>
                   <div className='rounded-md border bg-muted p-4'>
                     <pre className='max-h-[600px] overflow-auto text-xs whitespace-pre-wrap text-muted-foreground'>
                       {product.product_attributes_json
                         ? JSON.stringify(product.product_attributes_json, null, 2)
-                        : 'No attributes available.'}
+                        : 'No attribute taxonomy data available.'}
                     </pre>
                   </div>
                 </TabsContent>
