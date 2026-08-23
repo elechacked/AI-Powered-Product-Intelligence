@@ -1,9 +1,0 @@
-{
-	"id": "xLgfBvBNAP2uhLk",
-	"json": "{\"id\":\"xLgfBvBNAP2uhLk\",\"url\":\"https://example.com\",\"loadedUrl\":\"https://example.com/\",\"uniqueKey\":\"https://example.com#thecrawler-1787477096773-nmp4i44te8l-0\",\"method\":\"GET\",\"noRetry\":false,\"retryCount\":0,\"errorMessages\":[],\"headers\":{\"User-Agent\":\"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0\"},\"userData\":{\"depth\":0,\"__crawlee\":{\"state\":4}},\"handledAt\":\"2026-08-23T09:24:57.812Z\"}",
-	"method": "GET",
-	"orderNo": null,
-	"retryCount": 0,
-	"uniqueKey": "https://example.com#thecrawler-1787477096773-nmp4i44te8l-0",
-	"url": "https://example.com"
-}

@@ -1,9 +1,0 @@
-{
-	"id": "s0Ij3I8ImvUJcUl",
-	"json": "{\"id\":\"s0Ij3I8ImvUJcUl\",\"url\":\"https://example.com/\",\"loadedUrl\":\"https://example.com/\",\"uniqueKey\":\"https://example.com/#thecrawler-1787477135818-633hyiwr7lb-1\",\"method\":\"GET\",\"noRetry\":false,\"retryCount\":0,\"errorMessages\":[],\"headers\":{},\"userData\":{\"depth\":0,\"__crawlee\":{\"state\":4}},\"handledAt\":\"2026-08-23T09:25:40.699Z\"}",
-	"method": "GET",
-	"orderNo": null,
-	"retryCount": 0,
-	"uniqueKey": "https://example.com/#thecrawler-1787477135818-633hyiwr7lb-1",
-	"url": "https://example.com/"
-}

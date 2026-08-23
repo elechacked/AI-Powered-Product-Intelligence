@@ -19,7 +19,7 @@
         "google-it": "^1.6.4",
         "groq-sdk": "^1.5.0",
         "multer": "^2.2.0",
-        "thecrawler": "file:thecrawler-0.5.8.tgz"
+        "thecrawler": "file:./engine"
     },
     "devDependencies": {
         "@types/node": "^20.0.0",

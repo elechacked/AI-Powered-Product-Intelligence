@@ -1,24 +1,31 @@
 node_modules/
-__pycache__/
-*.pyc
-.env
-docs/
-AGENTS.md
-backend/uploads/
-backend/products.db
-.DS_Store
 dist/
-build/
-IMPLEMENTATION_PLAN.md
-backend/test_ddg.py
-backend/tests
-frontend/dist
-frontend/.vscode
-frontend/node_modules
-frontend/.github
-backup_scraper.py
-e2e_test.py
-backend
-docs
-backend/.venv
-/backend/strings.txt
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+
+# Runtime/generated crawler state
+storage/
+backendv2/storage/
+
+# SQLite runtime databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+!data/samples/*.db
+
+# Upload/runtime files
+uploads/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+.cache/
