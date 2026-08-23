@@ -212,6 +212,11 @@ export async function processValidator(productId, db) {
     db.prepare("UPDATE products SET commerce_ready = ?, overall_confidence = ?, validation_status = ? WHERE id = ?").run(
         isReady ? 1 : 0, overallConfidence, valStatus, productId
     );
+    
+    // Ensure all duplicates of this product inherit the updated states
+    db.prepare("UPDATE products SET commerce_ready = ?, overall_confidence = ?, validation_status = ? WHERE canonical_product_id = ?").run(
+        isReady ? 1 : 0, overallConfidence, valStatus, productId
+    );
 
     return {
         status: 'done',

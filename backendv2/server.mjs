@@ -109,6 +109,14 @@ async function executePipelineForProducts(insertedProducts) {
       if (canonical) {
           db.prepare("UPDATE products SET canonical_product_id = ? WHERE id = ?").run(canonical.id, p.id);
           
+          // Copy canonical stats to the duplicate instantly so filtering and sorting works correctly
+          const canonStats = db.prepare("SELECT commerce_ready, overall_confidence, validation_status FROM products WHERE id = ?").get(canonical.id);
+          if (canonStats) {
+              db.prepare("UPDATE products SET commerce_ready = ?, overall_confidence = ?, validation_status = ? WHERE id = ?").run(
+                  canonStats.commerce_ready, canonStats.overall_confidence, canonStats.validation_status, p.id
+              );
+          }
+          
           const doneTime = new Date().toISOString();
           db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'")
             .run(JSON.stringify({ status: 'duplicate_found', canonical_product_id: canonical.id }), doneTime, doneTime, p.id);
@@ -563,7 +571,8 @@ app.get('/api/products', (req, res) => {
   const rows = db.prepare(query).all(...params);
   
   const items = rows.map(r => {
-    const runs = db.prepare('SELECT * FROM product_pipeline_runs WHERE product_id = ?').all(r.id);
+    const targetId = r.canonical_product_id || r.id;
+    const runs = db.prepare('SELECT * FROM product_pipeline_runs WHERE product_id = ?').all(targetId);
     const hasFailed = runs.some(run => run.status === 'failed');
     const hasPending = runs.some(run => run.status === 'pending' || run.status === 'processing');
     const notFound = runs.some(run => run.stage === 'orchestration' && run.error_json && run.error_json.includes('not_found'));
@@ -572,13 +581,24 @@ app.get('/api/products', (req, res) => {
     else if (hasPending) jobStatus = 'pending';
     else if (notFound) jobStatus = 'not_found';
     
+    let commerceReady = r.commerce_ready;
+    let overallConfidence = r.overall_confidence;
+    
+    if (r.canonical_product_id) {
+       const canon = db.prepare('SELECT commerce_ready, overall_confidence FROM products WHERE id = ?').get(r.canonical_product_id);
+       if (canon) {
+          commerceReady = canon.commerce_ready;
+          overallConfidence = canon.overall_confidence;
+       }
+    }
+
     return {
       id: r.id,
       mfg_part_num: r.mfg_part_num,
       part_desc: r.part_desc,
       job_status: jobStatus,
-      commerce_ready: r.commerce_ready === 1,
-      overall_confidence: r.overall_confidence
+      commerce_ready: commerceReady === 1,
+      overall_confidence: overallConfidence
     };
   });
   res.json({ items, total: rows.length });
