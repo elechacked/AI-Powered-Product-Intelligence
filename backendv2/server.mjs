@@ -2,8 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { db } from './pipeline/orchestration/db.mjs';
-import { parseCsvString } from './pipeline/input/csv_reader.ts';
-import { normalizeRows } from './pipeline/input/normalizer.ts';
+import { parseCsvString } from './pipeline/input/csv_reader.js';
+import { normalizeRows } from './pipeline/input/normalizer.js';
 import { discoverUrlsForProduct } from './pipeline/orchestration/url_discovery.mjs';
 import { processProductSanitization } from './pipeline/sanitizer.mjs';
 import { runExtractorAgent } from './pipeline/extractor/agent.mjs';
@@ -12,6 +12,7 @@ import { processAttributeTaxonomy } from './pipeline/attribute_taxonomy/agent.mj
 import { processNormalizer } from './pipeline/normalizer/agent.mjs';
 import { processWriter } from './pipeline/writer/agent.mjs';
 import { processValidator } from './pipeline/validator/agent.mjs';
+import { executePipelineForProducts, recoverStaleProducts } from './pipeline/orchestration/product_worker_pool.mjs';
 
 const app = express();
 app.use(cors());
@@ -86,410 +87,43 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   executePipelineForProducts(insertedProducts);
 });
 
-async function executePipelineForProducts(insertedProducts) {
-    for (const p of insertedProducts) {
-      const now = new Date().toISOString();
-      const normalizedSku = p.mfg_part_num.toLowerCase().replace(/[^a-z0-9]/g, '');
-      
-      // -- PHASE: Deduplicator --
-      db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'").run(now, p.id);
-      
-      const canonical = db.prepare(`
-        SELECT id FROM products 
-        WHERE normalized_mfg_part_num = ? 
-          AND id != ? 
-          AND canonical_product_id IS NULL 
-          AND id IN (
-            SELECT product_id FROM product_pipeline_runs 
-            WHERE stage = 'validator' AND status IN ('done', 'skipped')
-          )
-        ORDER BY id DESC LIMIT 1
-      `).get(normalizedSku, p.id);
-      
-      if (canonical) {
-          db.prepare("UPDATE products SET canonical_product_id = ? WHERE id = ?").run(canonical.id, p.id);
-          
-          // Copy canonical stats to the duplicate instantly so filtering and sorting works correctly
-          const canonStats = db.prepare("SELECT commerce_ready, overall_confidence, validation_status FROM products WHERE id = ?").get(canonical.id);
-          if (canonStats) {
-              db.prepare("UPDATE products SET commerce_ready = ?, overall_confidence = ?, validation_status = ? WHERE id = ?").run(
-                  canonStats.commerce_ready, canonStats.overall_confidence, canonStats.validation_status, p.id
-              );
-          }
-          
-          const doneTime = new Date().toISOString();
-          db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'")
-            .run(JSON.stringify({ status: 'duplicate_found', canonical_product_id: canonical.id }), doneTime, doneTime, p.id);
-            
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'orchestration', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'crawler', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'reused', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          
-          continue; // Short circuit, use canonical
-      }
-      
-      const uniqueTime = new Date().toISOString();
-      db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'deduplicator'")
-        .run(JSON.stringify({ status: 'unique', normalized_mfg_part_num: normalizedSku }), uniqueTime, uniqueTime, p.id);
-        
-      db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'orchestration', 'pending', ?, ?)").run(p.id, uniqueTime, uniqueTime);
-      
-      // -- PHASE: Orchestration --
-      db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(now, p.id);
-      
-      try {
-        const orchestrationResult = await discoverUrlsForProduct(p);
-        
-        const finalJson = JSON.stringify({
-          sku: p.mfg_part_num,
-          sources: orchestrationResult
-        });
-        
-        const doneTime = new Date().toISOString();
-        db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(finalJson, doneTime, doneTime, p.id);
-
-        // --- START CRAWLER ---
-        db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'crawler', 'processing', ?, ?)").run(p.id, doneTime, doneTime);
-        
-        const validSources = orchestrationResult.filter(s => s.product_url && s.url_status === 'success');
-        
-        if (validSources.length === 0) {
-          const finalJson = JSON.stringify({ sku: p.mfg_part_num, sources: orchestrationResult, error: 'no_product_urls_found' });
-          const doneTime = new Date().toISOString();
-          
-          // Mark orchestration as done (the search completed successfully, just found nothing)
-          db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'orchestration'").run(finalJson, JSON.stringify({error: 'not_found'}), doneTime, doneTime, p.id);
-          
-          // Mark crawler (which was already inserted as processing) as skipped
-          db.prepare("UPDATE product_pipeline_runs SET status = 'skipped', completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'crawler'").run(doneTime, doneTime, p.id);
-          
-          // Insert downstream stages as skipped
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'evidence_sanitization', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'extractor', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'classifier', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'attribute_taxonomy', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'skipped', ?, ?, ?)").run(p.id, doneTime, doneTime, doneTime);
-          
-          continue; // Short circuit
-        }
-        
-        const insertSource = db.prepare(`
-          INSERT INTO product_sources (product_id, source_name, source_role, source_domain, source_url, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, 'processing', ?, ?)
-        `);
-        
-        const insertCrawlResult = db.prepare(`
-          INSERT INTO source_crawl_results (product_source_id, source_type, url, status, output_json, error_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        
-        const sourceMap = new Map();
-        for (const s of validSources) {
-           const row = insertSource.run(p.id, s.source_name, s.source_role, s.official_domain, s.product_url, doneTime, doneTime);
-           sourceMap.set(s.product_url, { dbId: row.lastInsertRowid, source: s });
-        }
-        
-        const crawlUrls = validSources.map(s => s.product_url);
-        
-        let crawlerStatus = 'done';
-        if (crawlUrls.length > 0) {
-            const { crawl } = await import('thecrawler');
-            
-            const crawlResult = await crawl({
-                urls: crawlUrls,
-                extractMarkdown: true,
-                extractStructuredData: true,
-                extractTables: true,
-                adaptiveCrawling: true,
-                cache: { enabled: false }
-            });
-            
-            let successes = 0;
-            let failures = 0;
-            
-            // For matching, create an array of unmapped dbIds
-            const unmappedDbIds = new Set(Array.from(sourceMap.values()).map(x => x.dbId));
-
-            for (let i = 0; i < crawlResult.pages.length; i++) {
-                const page = crawlResult.pages[i];
-                // Best effort matching: exact URL, or original requested URL based on index if array sizes match
-                let mapInfo = sourceMap.get(page.url);
-                if (!mapInfo && crawlUrls[i]) {
-                    mapInfo = sourceMap.get(crawlUrls[i]);
-                }
-                if (!mapInfo) continue;
-                
-                const dbId = mapInfo.dbId;
-                if (!unmappedDbIds.has(dbId)) continue; // already processed
-                unmappedDbIds.delete(dbId);
-                
-                if (page.status === 'success' || page.statusCode === 200) {
-                    successes++;
-                    db.prepare("UPDATE product_sources SET status = 'done', updated_at = ? WHERE id = ?").run(new Date().toISOString(), dbId);
-                    
-                    const outputData = {
-                        text: page.text,
-                        markdown: page.markdown,
-                        structuredData: page.structuredData,
-                        commerceData: page.commerceData,
-                        microdata: page.microdata,
-                        tables: page.tables,
-                        meta: page.meta,
-                        openGraph: page.openGraph,
-                        twitterCard: page.twitterCard,
-                        images: (page.images || []).filter(img => {
-                            const src = (img.src || '').toLowerCase();
-                            const alt = (img.alt || '').toLowerCase();
-                            if (src.includes('logo') || alt.includes('logo')) return false;
-                            if (src.includes('/icon/') || alt.includes('icon') || src.includes('facebook') || src.includes('twitter') || src.includes('instagram')) return false;
-                            if (src.includes('banner') || alt.includes('banner')) return false;
-                            if (src.endsWith('.svg') || src.endsWith('.gif')) return false;
-                            return true;
-                        })
-                    };
-                    
-                    insertCrawlResult.run(dbId, 'product_page', page.url, 'done', JSON.stringify(outputData), null, new Date().toISOString(), new Date().toISOString());
-                    
-                    // Document Discovery
-                    const docLinks = (page.links || []).filter(link => {
-                        const href = link.url || '';
-                        const txt = (link.text || '').toLowerCase();
-                        if (href.match(/\.(pdf|docx?|xlsx?|csv)$/i)) return true;
-                        if (txt.includes('datasheet') || txt.includes('data sheet') || txt.includes('specification') || txt.includes('technical data') || txt.includes('manual') || txt.includes('brochure')) {
-                            return true;
-                        }
-                        return false;
-                    });
-                    
-                    const uniqueDocs = new Map();
-                    for (const l of docLinks) {
-                        if (l.url && !uniqueDocs.has(l.url)) uniqueDocs.set(l.url, l);
-                    }
-                    
-                    for (const doc of uniqueDocs.values()) {
-                       const docExtMatch = doc.url.match(/\.(pdf|docx?|xlsx?|csv)$/i);
-                       const docType = docExtMatch ? docExtMatch[1].toLowerCase() : 'document';
-                       const isSupported = docType === 'pdf' || docType === 'doc' || docType === 'docx';
-                       
-                       const docStatus = isSupported ? 'processing' : 'unsupported';
-                       const docRow = insertCrawlResult.run(dbId, docType, doc.url, docStatus, JSON.stringify({ anchorText: doc.text }), null, new Date().toISOString(), new Date().toISOString());
-                       
-                       if (isSupported) {
-                           try {
-                               const docCrawl = await crawl({
-                                   urls: [doc.url],
-                                   extractMarkdown: true,
-                                   adaptiveCrawling: false
-                               });
-                               const docPage = docCrawl.pages[0];
-                               if (docPage && (docPage.status === 'success' || docPage.text || docPage.markdown)) {
-                                   const docOut = { text: docPage.text, markdown: docPage.markdown, meta: docPage.meta || docPage.metadata, anchorText: doc.text };
-                                   db.prepare("UPDATE source_crawl_results SET status = 'done', output_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify(docOut), new Date().toISOString(), docRow.lastInsertRowid);
-                               } else {
-                                   db.prepare("UPDATE source_crawl_results SET status = 'failed', error_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({error: docPage?.error || 'Document parse failed'}), new Date().toISOString(), docRow.lastInsertRowid);
-                               }
-                           } catch (docErr) {
-                               db.prepare("UPDATE source_crawl_results SET status = 'failed', error_json = ?, updated_at = ? WHERE id = ?").run(JSON.stringify({error: docErr.message}), new Date().toISOString(), docRow.lastInsertRowid);
-                           }
-                       }
-                    }
-                    
-                } else {
-                    failures++;
-                    db.prepare("UPDATE product_sources SET status = 'failed', updated_at = ? WHERE id = ?").run(new Date().toISOString(), dbId);
-                    insertCrawlResult.run(dbId, 'product_page', page.url, 'failed', null, JSON.stringify({ error: page.error, errorType: page.errorType }), new Date().toISOString(), new Date().toISOString());
-                }
-            }
-            
-            if (successes > 0 && failures > 0) crawlerStatus = 'partial';
-            else if (successes === 0 && failures > 0) crawlerStatus = 'failed';
-            else crawlerStatus = 'done';
-        }
-        
-        db.prepare("UPDATE product_pipeline_runs SET status = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'crawler'").run(crawlerStatus, new Date().toISOString(), new Date().toISOString(), p.id);
-        if (crawlerStatus === 'done' || crawlerStatus === 'partial' || crawlerStatus === 'failed') {
-            // Queue next step: evidence_sanitization
-            const nowIso = new Date().toISOString();
-            db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'evidence_sanitization', 'pending', ?, ?)`).run(p.id, nowIso, nowIso);
-        }
-        
-      } catch (err) {
-        console.error('Orchestration/Crawler failed for product', p.id, err);
-        const errTime = new Date().toISOString();
-        db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage IN ('orchestration', 'crawler') AND status = 'processing'").run(JSON.stringify({ error: err.message }), errTime, errTime, p.id);
-      }
-    }
-
-    // PHASE 3: Evidence Sanitization
-    const pendingSanitization = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'evidence_sanitization' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
-    for (let p of pendingSanitization) {
-        try {
-            const status = processProductSanitization(p.product_id);
-            const completeTime = new Date().toISOString();
-            db.prepare("UPDATE product_pipeline_runs SET status = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'evidence_sanitization'").run(status, completeTime, completeTime, p.product_id);
-            if (status === 'done' || status === 'partial' || status === 'failed') {
-                const nowIso = new Date().toISOString();
-                db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'extractor', 'pending', ?, ?)`).run(p.product_id, nowIso, nowIso);
-            }
-        } catch(err) {
-            console.error('Sanitization failed for product', p.product_id, err);
-            const errTime = new Date().toISOString();
-            db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'evidence_sanitization'").run(JSON.stringify({ error: err.message }), errTime, errTime, p.product_id);
-        }
-    }
-
-    // PHASE 4: Extractor
-    const pendingExtractor = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'extractor' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
-    for (let p of pendingExtractor) {
-        try {
-            const product = db.prepare("SELECT * FROM products WHERE id = ?").get(p.product_id);
-            const sources = db.prepare("SELECT * FROM product_sources WHERE product_id = ?").all(p.product_id);
-            const evidences = sources.map(source => {
-                const evi = db.prepare("SELECT * FROM sanitized_evidence WHERE product_source_id = ?").get(source.id);
-                if (!evi) return null;
-                return {
-                    source_name: source.source_name,
-                    source_role: source.source_role,
-                    source_url: source.source_url,
-                    evidence_json: evi.evidence_json ? JSON.parse(evi.evidence_json) : null
-                };
-            }).filter(Boolean);
-            
-            const result = await runExtractorAgent(product, evidences);
-            const now = new Date().toISOString();
-            
-            db.prepare(`INSERT INTO product_extractions 
-              (product_id, extraction_status, extraction_json, model_used, provider_used, fallback_used, retry_count, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-                p.product_id,
-                result.parsed.extraction_status,
-                JSON.stringify(result.parsed),
-                result.modelUsed,
-                "google-ai-studio",
-                result.fallbackUsed ? 1 : 0,
-                result.retryCount,
-                now, now
-            );
-            
-            let finalManufacturerName = result.parsed.manufacturer_name;
-            if (!finalManufacturerName && p.part_manuf_company_name) {
-                finalManufacturerName = p.part_manuf_company_name;
-            }
-            if (finalManufacturerName) {
-                db.prepare("UPDATE products SET manufacturer_name = ? WHERE id = ?").run(finalManufacturerName, p.product_id);
-            }
-
-            db.prepare("UPDATE product_pipeline_runs SET status = 'done', output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
-              .run(JSON.stringify({ status: result.parsed.extraction_status, model: result.modelUsed }), now, now, p.product_id);
-              
-            const nextTime = new Date().toISOString();
-            db.prepare(`INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'classifier', 'pending', ?, ?)`).run(p.product_id, nextTime, nextTime);
-              
-        } catch(err) {
-            console.error('Extractor failed for product', p.product_id, err);
-            const errTime = new Date().toISOString();
-            db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'extractor'")
-              .run(JSON.stringify({ error: err.message }), errTime, errTime, p.product_id);
-        }
-    }
-
-    // PHASE 5: Classifier
-    const pendingClassifier = db.prepare("UPDATE product_pipeline_runs SET status = 'processing', updated_at = ? WHERE stage = 'classifier' AND status = 'pending' RETURNING product_id").all(new Date().toISOString());
-    for (let p of pendingClassifier) {
-        try {
-            const product = db.prepare("SELECT * FROM products WHERE id = ?").get(p.product_id);
-            await runTaxonomyClassifierAgent(product);
-            
-            // --- PHASE 5b: Attribute Taxonomy ---
-            const timeTax = new Date().toISOString();
-            db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'attribute_taxonomy', 'processing', ?, ?)").run(p.product_id, timeTax, timeTax);
-            
-            try {
-                const taxRes = await processAttributeTaxonomy(p.product_id, db);
-                const timeTaxDone = new Date().toISOString();
-                db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'attribute_taxonomy'").run(taxRes.status, JSON.stringify(taxRes), timeTaxDone, timeTaxDone, p.product_id);
-                
-                // --- PHASE 6: Normalizer ---
-                const timeNorm = new Date().toISOString();
-                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'normalizer', 'processing', ?, ?)").run(p.product_id, timeNorm, timeNorm);
-                
-                try {
-                    const normRes = await processNormalizer(p.product_id, db);
-                    const timeNormDone = new Date().toISOString();
-                    const finalNormStatus = normRes.status === 'no_attributes_available' ? 'skipped' : 'done';
-                    db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(finalNormStatus, JSON.stringify(normRes), timeNormDone, timeNormDone, p.product_id);
-
-                    // --- PHASE 7: Writer ---
-                    const timeWriter = new Date().toISOString();
-                    db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'writer', 'processing', ?, ?)").run(p.product_id, timeWriter, timeWriter);
-                    try {
-                        const writerRes = await processWriter(p.product_id, db);
-                        const timeWriterDone = new Date().toISOString();
-                        const wStatus = (writerRes.status === 'skipped' || writerRes.status === 'reused') ? writerRes.status : 'done';
-                        db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(wStatus, JSON.stringify(writerRes), timeWriterDone, timeWriterDone, p.product_id);
-                        
-                        // --- PHASE 8: Validator ---
-                        const timeValidator = new Date().toISOString();
-                        db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, updated_at) VALUES (?, 'validator', 'processing', ?, ?)").run(p.product_id, timeValidator, timeValidator);
-                        try {
-                            const valRes = await processValidator(p.product_id, db);
-                            const timeValDone = new Date().toISOString();
-                            const vStatus = (valRes.status === 'skipped' || valRes.status === 'reused') ? valRes.status : 'done';
-                            db.prepare("UPDATE product_pipeline_runs SET status = ?, output_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'validator'").run(vStatus, JSON.stringify(valRes), timeValDone, timeValDone, p.product_id);
-                        } catch (ve) {
-                            console.error(`[Orchestrator] Product ${p.product_id} Validator failed:`, ve);
-                            const tVErr = new Date().toISOString();
-                            db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'validator'").run(JSON.stringify({ error: ve.message }), tVErr, tVErr, p.product_id);
-                        }
-                    } catch (we) {
-                        console.error(`[Orchestrator] Product ${p.product_id} Writer failed:`, we);
-                        const tWErr = new Date().toISOString();
-                        db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'writer'").run(JSON.stringify({ error: we.message }), tWErr, tWErr, p.product_id);
-                        
-                        // Explicitly skip downstream Validator on Writer failure
-                        const tVSkip = new Date().toISOString();
-                        db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'validator', 'skipped', ?, ?, ?)").run(p.product_id, tVSkip, tVSkip, tVSkip);
-                    }
-                } catch (ne) {
-                    console.error(`[Orchestrator] Product ${p.product_id} Normalizer failed:`, ne);
-                    const timeNormFail = new Date().toISOString();
-                    db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'normalizer'").run(JSON.stringify({ error: ne.message }), timeNormFail, timeNormFail, p.product_id);
-                    const skipWriterTime = new Date().toISOString();
-                    db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.product_id, skipWriterTime, skipWriterTime, skipWriterTime);
-                }
-                
-            } catch (e) {
-                console.error(`[Orchestrator] Product ${p.product_id} Attribute Taxonomy failed:`, e);
-                const timeTaxFail = new Date().toISOString();
-                db.prepare("UPDATE product_pipeline_runs SET status = 'failed', error_json = ?, completed_at = ?, updated_at = ? WHERE product_id = ? AND stage = 'attribute_taxonomy'").run(JSON.stringify({ error: e.message }), timeTaxFail, timeTaxFail, p.product_id);
-                
-                const skipTime = new Date().toISOString();
-                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'normalizer', 'skipped', ?, ?, ?)").run(p.product_id, skipTime, skipTime, skipTime);
-                db.prepare("INSERT INTO product_pipeline_runs (product_id, stage, status, started_at, completed_at, updated_at) VALUES (?, 'writer', 'skipped', ?, ?, ?)").run(p.product_id, skipTime, skipTime, skipTime);
-            }
-            
-        } catch (err) {
-            console.error('Classifier wrapper failed for product', p.product_id, err);
-        }
-    }
-}
-
+// Recover any stale products from a previous crash
+recoverStaleProducts();
 
 app.get('/api/stats', (req, res) => {
   const totalRow = db.prepare('SELECT COUNT(*) as c FROM products').get();
+  
+  const failedRow = db.prepare(`
+    SELECT COUNT(DISTINCT p.id) as c 
+    FROM products p
+    WHERE EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND pr.status = 'failed'
+    )
+  `).get();
+
+  const enrichedRow = db.prepare(`
+    SELECT COUNT(DISTINCT p.id) as c 
+    FROM products p
+    WHERE NOT EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND (pr.status IN ('failed', 'pending', 'processing'))
+    ) 
+    AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id)
+    )
+  `).get();
+
+  const commerceReadyRow = db.prepare('SELECT COUNT(*) as c FROM products WHERE commerce_ready = 1').get();
+
   res.json({
     total: totalRow.c,
-    enriched: 0,
-    failed: 0,
-    commerceReady: 0
+    enriched: enrichedRow.c,
+    failed: failedRow.c,
+    commerceReady: commerceReadyRow.c
   });
 });
 

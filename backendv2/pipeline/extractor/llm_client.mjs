@@ -81,13 +81,26 @@ export async function callLlmStructured(systemInstruction, userPrompt, productMe
         throw new Error("GEMINI_API_KEY environment variable is not set");
     }
 
+    // Dynamic import of limiters to avoid circular dependencies if any
+    const { limiters } = await import('../orchestration/limiters.mjs');
+
     let attempt = 0;
     let fallbackUsed = false;
     let modelUsed = PRIMARY_MODEL;
-    const startTime = Date.now();
+    
+    // Token estimation
+    const estimatedTokens = Math.ceil(userPrompt.length / 4) + 500; // rough estimate
     
     while (attempt < maxRetries) {
+        let reservation = null;
+        let providerSuccess = false;
+        let actual_total_tokens = 0;
+        const limiter = (modelUsed === PRIMARY_MODEL) ? limiters.gemini : limiters.gemma;
+        
         try {
+            reservation = await limiter.acquire(estimatedTokens);
+            const startTime = Date.now();
+            
             const response = await ai.models.generateContent({
                 model: modelUsed,
                 contents: userPrompt,
@@ -99,16 +112,19 @@ export async function callLlmStructured(systemInstruction, userPrompt, productMe
                 }
             });
             
+            providerSuccess = true;
+            
             const latency_ms = Date.now() - startTime;
+            const prompt_tokens = response.usageMetadata?.promptTokenCount || estimatedTokens;
+            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
+            actual_total_tokens = response.usageMetadata?.totalTokenCount || (prompt_tokens + completion_tokens);
+            
+            limiter.reconcile(reservation, actual_total_tokens);
+            
             const rawText = response.text;
+            console.log(`[OBSERVABILITY] Stage: Extractor | Model: ${modelUsed} | ProductID: ${productMeta.id} | Wait: ${reservation.waitMs}ms | Exec: ${latency_ms}ms | EstTokens: ${estimatedTokens} | ActTokens: ${actual_total_tokens}`);
             const parsed = extractJsonObject(rawText);
             
-            // Extract token usage
-            const prompt_tokens = response.usageMetadata?.promptTokenCount || 0;
-            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
-            const total_tokens = response.usageMetadata?.totalTokenCount || 0;
-            
-            // Log to llm_logs
             try {
                 const db = require('better-sqlite3')('products.db');
                 db.prepare(`INSERT INTO llm_logs 
@@ -121,7 +137,7 @@ export async function callLlmStructured(systemInstruction, userPrompt, productMe
                     productMeta.sku,
                     parsed.brand_name || null,
                     productMeta.id,
-                    total_tokens,
+                    actual_total_tokens,
                     latency_ms,
                     prompt_tokens,
                     completion_tokens,
@@ -133,7 +149,6 @@ export async function callLlmStructured(systemInstruction, userPrompt, productMe
                 console.error("Failed to write to llm_logs:", dbErr);
             }
 
-            // Basic validation
             if (!parsed || !Array.isArray(parsed.attributes)) {
                 throw new Error("Invalid output: 'attributes' must be an array");
             }
@@ -144,6 +159,9 @@ export async function callLlmStructured(systemInstruction, userPrompt, productMe
             return { parsed, modelUsed, fallbackUsed, retryCount: attempt, error: null };
         } catch (err) {
             console.error(`LLM Call failed (Model: ${modelUsed}, Attempt: ${attempt}):`, err.message);
+            if (reservation && !providerSuccess) {
+                limiter.reconcile(reservation, 0);
+            }
             attempt++;
             
             if (attempt >= maxRetries && !fallbackUsed) {

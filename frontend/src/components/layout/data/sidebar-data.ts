@@ -2,7 +2,6 @@ import {
   LayoutDashboard,
   UploadCloud,
   Download,
-  Command,
   Box,
   FileText,
   Activity,
@@ -11,17 +10,10 @@ import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
   user: {
-    name: 'Admin',
-    email: 'admin@unilog.com',
-    avatar: '/avatars/shadcn.jpg',
+    name: 'Data Operations',
+    email: 'ops@unilog.com',
+    avatar: '/avatars/01.png',
   },
-  teams: [
-    {
-      name: 'Unilog AI',
-      logo: Command,
-      plan: 'Product Intelligence',
-    },
-  ],
   navGroups: [
     {
       title: 'Enrichment Pipeline',

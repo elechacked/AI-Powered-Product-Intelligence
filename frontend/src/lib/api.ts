@@ -34,10 +34,7 @@ export const retryProduct = async (id: string) => {
   return data
 }
 
-export const fetchProductDiff = async (id: string) => {
-  const { data } = await api.get('/api/products/' + id + '/diff')
-  return data
-}
+
 
 export const uploadFile = async (file: File) => {
   const formData = new FormData()

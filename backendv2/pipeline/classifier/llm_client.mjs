@@ -36,11 +36,21 @@ function logLlmCall(agent, model, productId, promptTokens, completionTokens, req
 }
 
 export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
+    // Dynamic import of limiters
+    const { limiters } = await import('../orchestration/limiters.mjs');
+    
+    // Estimate tokens
+    const estimatedTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 4) + 100;
+    
     const startTime = Date.now();
     
     // Try Primary (Groq)
     if (groq) {
+        let reservation = null;
+        let providerSuccess = false;
         try {
+            reservation = await limiters.qwen.acquire(estimatedTokens);
+            
             const completion = await groq.chat.completions.create({
                 model: PRIMARY_MODEL,
                 messages: [
@@ -51,9 +61,19 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
                 response_format: { type: 'json_object' }
             });
 
+            providerSuccess = true;
+            
+            const prompt_tokens = completion.usage?.prompt_tokens || estimatedTokens;
+            const completion_tokens = completion.usage?.completion_tokens || 0;
+            const total_tokens = prompt_tokens + completion_tokens;
+            
+            limiters.qwen.reconcile(reservation, total_tokens);
+            
             const responseText = completion.choices[0].message.content;
             const latencyMs = Date.now() - startTime;
-            logLlmCall('Classifier', PRIMARY_MODEL, productId, completion.usage?.prompt_tokens, completion.usage?.completion_tokens, userPrompt, responseText, systemPrompt, latencyMs);
+            
+            console.log(`[OBSERVABILITY] Stage: Classifier | Model: ${PRIMARY_MODEL} | ProductID: ${productId} | Wait: ${reservation.waitMs}ms | Exec: ${latencyMs}ms | EstTokens: ${estimatedTokens} | ActTokens: ${total_tokens}`);
+            logLlmCall('Classifier', PRIMARY_MODEL, productId, prompt_tokens, completion_tokens, userPrompt, responseText, systemPrompt, latencyMs);
 
             // Parse JSON to ensure validity
             const parsed = extractJsonObject(responseText);
@@ -66,12 +86,17 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
             };
         } catch (err) {
             console.error(`Primary model ${PRIMARY_MODEL} via Groq failed: ${err.message}. Attempting fallback...`);
+            if (reservation && !providerSuccess) limiters.qwen.reconcile(reservation, 0);
         }
     }
 
     // Try Fallback (Gemini via @google/genai)
     if (genai) {
+        let reservation = null;
+        let providerSuccess = false;
         try {
+            reservation = await limiters.gemma.acquire(estimatedTokens);
+            
             const response = await genai.models.generateContent({
                 model: FALLBACK_MODEL,
                 contents: systemPrompt + '\\n\\n' + userPrompt,
@@ -81,10 +106,18 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
                 }
             });
             
+            providerSuccess = true;
+            
+            const prompt_tokens = response.usageMetadata?.promptTokenCount || estimatedTokens;
+            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
+            const total_tokens = response.usageMetadata?.totalTokenCount || (prompt_tokens + completion_tokens);
+            
+            limiters.gemma.reconcile(reservation, total_tokens);
+            
             const responseText = response.text;
             const latencyMs = Date.now() - startTime;
-            const prompt_tokens = response.usageMetadata?.promptTokenCount || 0;
-            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
+            
+            console.log(`[OBSERVABILITY] Stage: Classifier | Model: ${FALLBACK_MODEL} | ProductID: ${productId} | Wait: ${reservation.waitMs}ms | Exec: ${latencyMs}ms | EstTokens: ${estimatedTokens} | ActTokens: ${total_tokens}`);
             logLlmCall('Classifier', FALLBACK_MODEL, productId, prompt_tokens, completion_tokens, userPrompt, responseText, systemPrompt, latencyMs);
             
             const parsed = extractJsonObject(responseText);
@@ -97,6 +130,7 @@ export async function invokeClassifierLLM(systemPrompt, userPrompt, productId) {
             };
         } catch (err) {
             console.error(`Fallback model ${FALLBACK_MODEL} failed: ${err.message}`);
+            if (reservation && !providerSuccess) limiters.gemma.reconcile(reservation, 0);
             throw err;
         }
     }

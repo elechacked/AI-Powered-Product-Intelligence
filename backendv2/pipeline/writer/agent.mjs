@@ -91,29 +91,43 @@ export async function processWriter(productId, db) {
         return { status: 'skipped', reason: 'no_extractor_data_and_no_attributes' };
     }
 
-    // Resolve marketing description provenance: find which crawled source provided it.
-    // The extractor stores attributes with per-attribute source_url/source_name.
-    // The marketing copy itself comes from the same crawl session — use the first
-    // source that has a non-null source_url as the provenance anchor.
     let marketingSourceUrl = null;
     let marketingSourceName = null;
-    if (extractorJson?.marketing_description_raw) {
-        // Prefer a source explicitly labelled 'part_manuf', else use first available
-        const mfgAttr = (extractorJson.attributes || []).find(a => a.source_role === 'part_manuf' && a.source_url);
-        const firstAttr = (extractorJson.attributes || []).find(a => a.source_url);
-        const chosen = mfgAttr || firstAttr;
-        marketingSourceUrl = chosen?.source_url || null;
-        marketingSourceName = chosen?.source_name || null;
+    let rawMarketingDescription = null;
+
+    const sources = db.prepare(`SELECT id, source_name, source_role, source_domain, source_url FROM product_sources WHERE product_id = ? AND status = 'done' ORDER BY CASE WHEN source_role = 'part_manuf' THEN 1 ELSE 2 END ASC`).all(productId);
+    
+    for (const source of sources) {
+        const evidenceRow = db.prepare(`SELECT evidence_json FROM sanitized_evidence WHERE product_source_id = ?`).get(source.id);
+        if (evidenceRow && evidenceRow.evidence_json) {
+            try {
+                const evidence = JSON.parse(evidenceRow.evidence_json);
+                for (const crawl of evidence.crawls || []) {
+                    const data = crawl.data;
+                    const desc = data?.metadata?.description || data?.description || data?.openGraph?.description || data?.brandOrg?.description;
+                    if (desc && desc.trim().length > 10) {
+                        rawMarketingDescription = desc.trim();
+                        marketingSourceUrl = crawl.url || source.source_url;
+                        marketingSourceName = source.source_name;
+                        break;
+                    }
+                }
+            } catch(e) {}
+        }
+        if (rawMarketingDescription) break;
     }
 
     const systemInstruction = SYSTEM_INSTRUCTION;
-    const userPrompt = buildUserPrompt(pRow, classJson, attrs, extractorJson);
+    const userPrompt = buildUserPrompt(pRow, classJson, attrs, { ...extractorJson, marketing_description_raw: rawMarketingDescription });
 
     const result = await callWriterLlm(systemInstruction, userPrompt, {
         sku: pRow.mfg_part_num,
         brand: extractorJson?.brand_name || pRow.e1_brand,
         id: productId
     }, db);
+
+    // Bypass LLM completely for marketing_description
+    result.parsed.marketing_description = rawMarketingDescription;
 
     upsertProductDescriptions(db, productId, result.parsed, {
         ...result,

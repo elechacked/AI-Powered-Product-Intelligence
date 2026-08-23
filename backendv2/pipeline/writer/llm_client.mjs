@@ -52,6 +52,7 @@ export const writerSchema = {
             description: 'Count of non-null description fields generated.'
         }
     },
+    required: ["long_description"],
     propertyOrdering: [
         'invoice_description', 'mobile_description', 'in_app_description',
         'short_description', 'long_description', 'retail_description', 'generation_status', 'fields_generated'
@@ -63,13 +64,24 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
         throw new Error('GEMINI_API_KEY environment variable is not set');
     }
 
+    const { limiters } = await import('../orchestration/limiters.mjs');
+
     let attempt = 0;
     let fallbackUsed = false;
     let modelUsed = PRIMARY_MODEL;
-    const startTime = Date.now();
+    
+    const estimatedTokens = Math.ceil((systemInstruction.length + userPrompt.length) / 4) + 200;
 
     while (attempt < maxRetries) {
+        let reservation = null;
+        let providerSuccess = false;
+        let actual_total_tokens = 0;
+        const limiter = (modelUsed === PRIMARY_MODEL) ? limiters.gemma : limiters.gemini;
+        
         try {
+            reservation = await limiter.acquire(estimatedTokens);
+            const startTime = Date.now();
+            
             const response = await ai.models.generateContent({
                 model: modelUsed,
                 contents: userPrompt,
@@ -81,13 +93,18 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
                 }
             });
 
+            providerSuccess = true;
+            
+            const prompt_tokens = response.usageMetadata?.promptTokenCount || estimatedTokens;
+            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
+            actual_total_tokens = response.usageMetadata?.totalTokenCount || (prompt_tokens + completion_tokens);
+
+            limiter.reconcile(reservation, actual_total_tokens);
+
             const latency_ms = Date.now() - startTime;
             const rawText = response.text;
+            console.log(`[OBSERVABILITY] Stage: Writer | Model: ${modelUsed} | ProductID: ${productMeta.id} | Wait: ${reservation.waitMs}ms | Exec: ${latency_ms}ms | EstTokens: ${estimatedTokens} | ActTokens: ${actual_total_tokens}`);
             const parsed = extractJsonObject(rawText);
-
-            const prompt_tokens = response.usageMetadata?.promptTokenCount || 0;
-            const completion_tokens = response.usageMetadata?.candidatesTokenCount || 0;
-            const total_tokens = response.usageMetadata?.totalTokenCount || 0;
 
             // Log to llm_logs
             try {
@@ -100,9 +117,9 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
                     'WriterAgent',
                     modelUsed,
                     productMeta.sku,
-                    productMeta.brand || null,
+                    parsed.brand_name || null,
                     productMeta.id,
-                    total_tokens,
+                    actual_total_tokens,
                     latency_ms,
                     prompt_tokens,
                     completion_tokens,
@@ -111,31 +128,21 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
                     systemInstruction
                 );
             } catch (dbErr) {
-                console.error('[WriterAgent] Failed to write to llm_logs:', dbErr);
+                console.error('Failed to write to llm_logs:', dbErr.message);
             }
 
-            // Validate output
-            if (!parsed || !parsed.generation_status) {
-                throw new Error("Invalid Writer output: missing generation_status");
+            if (!parsed.generation_status) {
+                parsed.generation_status = 'partial';
             }
 
-            return {
-                parsed,
-                modelUsed,
-                fallbackUsed,
-                retryCount: attempt,
-                latency_ms,
-                prompt_tokens,
-                completion_tokens,
-                total_tokens
-            };
-
+            return { parsed, modelUsed, fallbackUsed, retryCount: attempt, error: null };
         } catch (err) {
-            console.error(`[WriterAgent] LLM call failed (Model: ${modelUsed}, Attempt: ${attempt}):`, err.message);
+            console.error(`Writer LLM Call failed (Model: ${modelUsed}, Attempt: ${attempt}):`, err.message);
+            if (reservation && !providerSuccess) limiter.reconcile(reservation, 0);
             attempt++;
 
             if (attempt >= maxRetries && !fallbackUsed) {
-                console.warn(`[WriterAgent] Switching to fallback model: ${FALLBACK_MODEL}`);
+                console.warn(`Writer switching to fallback model: ${FALLBACK_MODEL}`);
                 modelUsed = FALLBACK_MODEL;
                 fallbackUsed = true;
                 attempt = 0;
@@ -144,5 +151,5 @@ export async function callWriterLlm(systemInstruction, userPrompt, productMeta, 
         }
     }
 
-    throw new Error('Writer LLM failed after retries using both primary and fallback models.');
+    throw new Error(`Description generation failed after retries using both primary and fallback models.`);
 }

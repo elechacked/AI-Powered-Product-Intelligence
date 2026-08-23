@@ -52,9 +52,9 @@ export async function runTaxonomyClassifierAgent(product) {
         
         let productRepresentation = `Product: ${product.part_desc}\\nMFG Part Num: ${product.mfg_part_num}\\n`;
         
-        if (extraction && extraction.fields) {
+        if (extraction && extraction.attributes) {
             productRepresentation += 'Extracted facts:\\n';
-            for (const f of extraction.fields) {
+            for (const f of extraction.attributes) {
                 productRepresentation += `${f.label}: ${f.value}\\n`;
             }
         }
