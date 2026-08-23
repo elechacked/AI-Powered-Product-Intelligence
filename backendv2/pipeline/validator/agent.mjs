@@ -126,7 +126,7 @@ export async function processValidator(productId, db) {
         // "Detect scraped vs inferred conflicts" using is_inferred, extracted_value, normalized_value
         const scrapedExtracted = pa.extracted_value || '';
         const finalNormalized = pa.normalized_value || '';
-        const deterministicallyNormalized = normalizeValue(pa.attribute_name, scrapedExtracted).value || '';
+        const deterministicallyNormalized = normalizeValue(pa.attribute_name, scrapedExtracted).normalized || '';
         
         function normalizeForComparison(value) {
             return String(value).trim().replace(/\s+/g, ' ').toLowerCase();

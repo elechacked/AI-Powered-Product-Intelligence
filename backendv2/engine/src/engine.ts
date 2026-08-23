@@ -1311,7 +1311,14 @@ export async function crawlStream(
     const runId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let requestSeq = 0;
     const requestQueue = await RequestQueue.open(`thecrawler-${runId}`);
-    const makeRequest = (url: string, depth = 0) => {
+    let playwrightQueue: RequestQueue | null = null;
+    
+    const INTERNAL_MAX_CONCURRENCY = 5;
+    const INTERNAL_MAX_REQUESTS_PER_MINUTE = 60;
+    const INTERNAL_SAME_DOMAIN_DELAY_SECS = 1;
+
+    try {
+        const makeRequest = (url: string, depth = 0) => {
         const fullUrl = url.startsWith('http') ? url : `https://${url}`;
         return {
             url: fullUrl,
@@ -1336,6 +1343,9 @@ export async function crawlStream(
 
     if (usePlaywright) {
         const crawler = new PlaywrightCrawler({
+            maxConcurrency: INTERNAL_MAX_CONCURRENCY,
+            maxRequestsPerMinute: INTERNAL_MAX_REQUESTS_PER_MINUTE,
+            sameDomainDelaySecs: INTERNAL_SAME_DOMAIN_DELAY_SECS,
             maxRequestsPerCrawl: maxPages, proxyConfiguration,
             requestQueue,
             maxRequestRetries: requestRetries,
@@ -1400,6 +1410,9 @@ export async function crawlStream(
     } else {
         const spaUrls: { url: string; depth: number }[] = [];
         const crawler = new CheerioCrawler({
+            maxConcurrency: INTERNAL_MAX_CONCURRENCY,
+            maxRequestsPerMinute: INTERNAL_MAX_REQUESTS_PER_MINUTE,
+            sameDomainDelaySecs: INTERNAL_SAME_DOMAIN_DELAY_SECS,
             maxRequestsPerCrawl: maxPages, proxyConfiguration,
             requestQueue,
             maxRequestRetries: requestRetries,
@@ -1465,8 +1478,11 @@ export async function crawlStream(
 
         if (spaUrls.length > 0) {
             log.info(`Adaptive: re-scraping ${spaUrls.length} SPA page(s) with Playwright`);
-            const playwrightQueue = await RequestQueue.open(`thecrawler-${runId}-playwright`);
+            playwrightQueue = await RequestQueue.open(`thecrawler-${runId}-playwright`);
             const pwCrawler = new PlaywrightCrawler({
+                maxConcurrency: INTERNAL_MAX_CONCURRENCY,
+                maxRequestsPerMinute: INTERNAL_MAX_REQUESTS_PER_MINUTE,
+                sameDomainDelaySecs: INTERNAL_SAME_DOMAIN_DELAY_SECS,
                 // Allow room beyond the SPA pages themselves so their links can be
                 // followed (bounded overall by the pagesScraped < maxPages guard).
                 maxRequestsPerCrawl: maxPages, proxyConfiguration,
@@ -1547,6 +1563,11 @@ export async function crawlStream(
             });
             await pwCrawler.run(spaUrls.map(s => makeRequest(s.url, s.depth)));
         }
+    }
+
+    } finally {
+        try { if (requestQueue) await requestQueue.drop(); } catch (e) { log.info(`Failed to drop requestQueue: ${e}`); }
+        try { if (playwrightQueue) await playwrightQueue.drop(); } catch (e) { log.info(`Failed to drop playwrightQueue: ${e}`); }
     }
 
     if (pagesEmitted === 0) {
