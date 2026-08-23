@@ -195,6 +195,47 @@ export class DomainLimiter {
     }
 }
 
+export class PacedLimiter {
+    constructor(requestsPerSecond) {
+        this.intervalMs = Math.ceil(1000 / requestsPerSecond);
+        this.queue = [];
+        this.lastRunTime = 0;
+        this._timeoutId = null;
+    }
+
+    async acquire() {
+        return new Promise(resolve => {
+            this.queue.push(resolve);
+            this._pump();
+        });
+    }
+
+    _pump() {
+        if (this._timeoutId) return; // already pumping
+        if (this.queue.length === 0) return; // nothing to do
+
+        const now = Date.now();
+        const nextAllowedTime = this.lastRunTime + this.intervalMs;
+
+        if (now >= nextAllowedTime) {
+            this.lastRunTime = now;
+            const resolve = this.queue.shift();
+            resolve();
+            if (this.queue.length > 0) {
+                this._timeoutId = setTimeout(() => {
+                    this._timeoutId = null;
+                    this._pump();
+                }, this.intervalMs);
+            }
+        } else {
+            this._timeoutId = setTimeout(() => {
+                this._timeoutId = null;
+                this._pump();
+            }, nextAllowedTime - now);
+        }
+    }
+}
+
 export const limiters = {
     gemini: new RateLimiter({
         name: 'Gemini',
@@ -214,5 +255,6 @@ export const limiters = {
         tpm: CONFIG.GEMMA_SAFE_TPM,
         rpd: CONFIG.GEMMA_SAFE_RPD,
     }),
-    domain: new DomainLimiter()
+    domain: new DomainLimiter(),
+    serper: new PacedLimiter(5)
 };

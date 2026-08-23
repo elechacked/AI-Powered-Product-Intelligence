@@ -4,6 +4,8 @@
  * Implemented using Serper.dev
  */
 
+import { limiters } from './limiters.mjs';
+
 /**
  * Executes a web search.
  * 
@@ -22,6 +24,8 @@ export async function search(query, options = {}) {
     num: options.num || 10,
     ...options
   });
+
+  await limiters.serper.acquire();
 
   const response = await fetch("https://google.serper.dev/search", {
     method: "POST",
