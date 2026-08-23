@@ -1,5 +1,7 @@
 # AI-Powered Product Intelligence
 
+**Live Demo**: [https://product-intelligence.pska.org.in/](https://product-intelligence.pska.org.in/)
+
 An end-to-end data enrichment system with explainability and self-validation. This system ingests sparse product data and produces 252-column Unilog delivery format records using a 6-agent AI pipeline.
 
 ## Features
@@ -24,6 +26,7 @@ Copy the example environment file in the root folder to `.env` inside `backendv2
 cp .env.example backendv2/.env
 cp .env.example frontend/.env
 ```
+And also Create .env.production in frontend
 Add your `GEMINI_API_KEY` and `GROQ_API_KEY` (and `SERPER_API_KEY` if needed) to `backendv2/.env`.
 
 ### 2. Backend Setup
@@ -60,7 +63,7 @@ Start the application by running the backend and frontend separately.
 cd backendv2
 node --env-file=.env server.mjs
 ```
-The backend API will run on `http://localhost:9100`.
+The backend API will run on `http://localhost:9001`.
 
 ### Start Frontend
 
