@@ -8,6 +8,7 @@ import { ThemeSwitch } from '@/components/theme-switch'
 
 type ProductsSearch = {
   category?: string
+  status?: string
 }
 
 export const Route = createFileRoute('/_layout/products/')({
@@ -15,12 +16,13 @@ export const Route = createFileRoute('/_layout/products/')({
   validateSearch: (search: Record<string, unknown>): ProductsSearch => {
     return {
       category: search.category as string | undefined,
+      status: search.status as string | undefined,
     }
   },
 })
 
 function ProductsPage() {
-  const { category } = Route.useSearch()
+  const { category, status } = Route.useSearch()
   return (
     <>
       <Header>
@@ -38,7 +40,7 @@ function ProductsPage() {
               Manage and view all enriched products.
             </p>
           </div>
-          <ProductTable category={category} />
+          <ProductTable category={category} status={status} />
         </div>
       </Main>
     </>

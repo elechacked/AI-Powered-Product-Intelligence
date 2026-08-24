@@ -137,11 +137,32 @@ app.get('/api/stats', (req, res) => {
 
   const commerceReadyRow = db.prepare('SELECT COUNT(*) as c FROM products WHERE commerce_ready = 1').get();
 
+  const statusBreakdown = db.prepare(`
+    WITH ProductStatuses AS (
+      SELECT 
+        p.id as product_id,
+        CASE 
+          WHEN EXISTS (SELECT 1 FROM product_pipeline_runs pr WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.status = 'failed') THEN 'failed'
+          WHEN EXISTS (SELECT 1 FROM product_pipeline_runs pr WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.stage = 'orchestration' AND pr.error_json LIKE '%not_found%') THEN 'No URLs Found'
+          WHEN EXISTS (SELECT 1 FROM product_pipeline_runs pr WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.status IN ('pending', 'processing')) THEN 
+            (SELECT stage FROM product_pipeline_runs pr WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.status IN ('pending', 'processing') ORDER BY id DESC LIMIT 1)
+          ELSE 'completed'
+        END as current_status
+      FROM products p
+      WHERE EXISTS (SELECT 1 FROM product_pipeline_runs pr WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id))
+    )
+    SELECT current_status as status, COUNT(*) as count
+    FROM ProductStatuses
+    GROUP BY current_status
+    ORDER BY count DESC
+  `).all();
+
   res.json({
     total: totalRow.c,
     enriched: enrichedRow.c,
     failed: failedRow.c,
-    commerceReady: commerceReadyRow.c
+    commerceReady: commerceReadyRow.c,
+    statusBreakdown
   });
 });
 
@@ -214,13 +235,81 @@ app.get('/api/upload/batches/:batchId', (req, res) => {
 app.get('/api/products', (req, res) => {
   const batchId = req.query.batch_id;
   const confMin = req.query.confidence_min;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const statusFilter = req.query.status;
+  const search = req.query.search;
   
-  let query = 'SELECT * FROM products WHERE 1=1';
+  const offset = (page - 1) * limit;
+
+  let baseQuery = ' FROM products p WHERE 1=1';
   const params = [];
-  if (batchId) { query += ' AND import_batch_id = ?'; params.push(batchId); }
-  if (confMin) { query += ' AND overall_confidence >= ?'; params.push(parseFloat(confMin)); }
-  query += ' ORDER BY id DESC LIMIT 50';
-  const rows = db.prepare(query).all(...params);
+  
+  if (batchId) { baseQuery += ' AND p.import_batch_id = ?'; params.push(batchId); }
+  if (confMin) { baseQuery += ' AND p.overall_confidence >= ?'; params.push(parseFloat(confMin)); }
+  if (search) { baseQuery += ' AND p.mfg_part_num LIKE ?'; params.push(`%${search}%`); }
+
+  if (statusFilter === 'failed') {
+    baseQuery += ` AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND pr.status = 'failed'
+    )`;
+  } else if (statusFilter === 'enriched') {
+    baseQuery += ` AND NOT EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND (pr.status IN ('failed', 'pending', 'processing'))
+    ) 
+    AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id)
+    )`;
+  } else if (statusFilter === 'commerce_ready') {
+    baseQuery += ' AND p.commerce_ready = 1';
+  } else if (statusFilter === 'pending') {
+    baseQuery += ` AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND (pr.status IN ('pending', 'processing'))
+    )`;
+  } else if (statusFilter === 'No URLs Found') {
+    baseQuery += ` AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND pr.stage = 'orchestration' AND pr.error_json LIKE '%not_found%'
+    )`;
+  } else if (statusFilter === 'completed') {
+    baseQuery += ` AND NOT EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND (pr.status IN ('failed', 'pending', 'processing'))
+    ) AND EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id)
+    )`;
+  } else if (statusFilter) {
+    baseQuery += ` AND NOT EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.status = 'failed'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) AND pr.stage = 'orchestration' AND pr.error_json LIKE '%not_found%'
+    ) AND ? = (
+      SELECT stage FROM product_pipeline_runs pr 
+      WHERE pr.product_id = COALESCE(p.canonical_product_id, p.id) 
+      AND pr.status IN ('pending', 'processing') 
+      ORDER BY id DESC LIMIT 1
+    )`;
+    params.push(statusFilter);
+  }
+
+  const countQuery = 'SELECT COUNT(DISTINCT p.id) as total' + baseQuery;
+  const totalRow = db.prepare(countQuery).get(...params);
+  const total = totalRow.total;
+
+  const dataQuery = 'SELECT p.*' + baseQuery + ' ORDER BY p.id DESC LIMIT ? OFFSET ?';
+  const rows = db.prepare(dataQuery).all(...params, limit, offset);
   
   const items = rows.map(r => {
     const targetId = r.canonical_product_id || r.id;
@@ -253,7 +342,16 @@ app.get('/api/products', (req, res) => {
       overall_confidence: overallConfidence
     };
   });
-  res.json({ items, total: rows.length });
+  
+  res.json({
+    items,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit)
+    }
+  });
 });
 
 app.get('/api/products/:id', (req, res) => {
@@ -556,8 +654,17 @@ app.post('/api/products/:id/re-enrich', (req, res) => {
 
 app.get('/api/stats/logs', (req, res) => {
   const limit = req.query.limit || 100;
+  const search = req.query.search;
   try {
-    const logs = db.prepare('SELECT * FROM llm_logs ORDER BY id DESC LIMIT ?').all(limit);
+    let query = 'SELECT * FROM llm_logs WHERE 1=1';
+    const params = [];
+    if (search) {
+      query += ' AND product_sku LIKE ?';
+      params.push(`%${search}%`);
+    }
+    query += ' ORDER BY id DESC LIMIT ?';
+    params.push(limit);
+    const logs = db.prepare(query).all(...params);
     res.json(logs);
   } catch (err) {
     // Return empty if table doesn't exist yet or error

@@ -10,7 +10,7 @@ export const fetchStats = async () => {
   return data
 }
 
-export const fetchProducts = async (params?: { category?: string, status?: string, page?: number, limit?: number, batch_id?: string, confidence_min?: number }) => {
+export const fetchProducts = async (params?: { category?: string, status?: string, page?: number, limit?: number, batch_id?: string, confidence_min?: number, search?: string }) => {
   const searchParams = new URLSearchParams()
   if (params?.category) searchParams.append('category', params.category)
   if (params?.status) searchParams.append('status', params.status)
@@ -18,6 +18,7 @@ export const fetchProducts = async (params?: { category?: string, status?: strin
   if (params?.limit) searchParams.append('limit', params.limit.toString())
   if (params?.batch_id) searchParams.append('batch_id', params.batch_id)
   if (params?.confidence_min !== undefined) searchParams.append('confidence_min', params.confidence_min.toString())
+  if (params?.search) searchParams.append('search', params.search)
   
   const queryStr = searchParams.toString() ? `?${searchParams.toString()}` : ''
   const { data } = await api.get('/api/products' + queryStr)

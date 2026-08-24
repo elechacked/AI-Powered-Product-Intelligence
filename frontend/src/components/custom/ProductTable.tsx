@@ -1,21 +1,24 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   ColumnDef,
   flexRender,
   getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  SortingState,
   useReactTable,
 } from '@tanstack/react-table'
-import { ArrowUpDown, ChevronLeft, ChevronRight, Search, FileText, Loader2 } from 'lucide-react'
-import { fetchProducts } from '@/lib/api'
+import { ArrowUpDown, ChevronLeft, ChevronRight, Search, FileText, Loader2, X, RefreshCw } from 'lucide-react'
+import { fetchProducts, retryProduct } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -24,25 +27,104 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { ConfidenceBadge } from './ConfidenceBadge'
 
 export const ProductTable = ({
   category,
   filterConfidence,
   batchId,
+  status,
+  initialLimit = 20,
+  hideControls = false,
 }: {
   category?: string
   filterConfidence?: number
   batchId?: string
+  status?: string
+  initialLimit?: number
+  hideControls?: boolean
 }) => {
+  const [page, setPage] = useState(1)
+  const [limit, setLimit] = useState(initialLimit)
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [activeStatus, setActiveStatus] = useState<string | undefined>(status)
+  const queryClient = useQueryClient()
+  const [showRetryConfirm, setShowRetryConfirm] = useState(false)
+  const [retryResult, setRetryResult] = useState<{ queued: number, skipped: number } | null>(null)
+
+  const isRetryableStatus = activeStatus && !['completed', 'commerce_ready'].includes(activeStatus)
+
+  const bulkRetryMutation = useMutation({
+    mutationFn: async () => {
+      if (!activeStatus) return null
+      
+      const data = await fetchProducts({ status: activeStatus, limit: 100000 })
+      const products = data.items || []
+      let queued = 0
+      let skipped = 0
+      
+      for (let i = 0; i < products.length; i += 10) {
+        const chunk = products.slice(i, i + 10)
+        await Promise.all(chunk.map(async (p: any) => {
+          if (p.job_status === 'pending' || p.job_status === 'processing') {
+            skipped++
+          } else {
+            await retryProduct(p.id.toString())
+            queued++
+          }
+        }))
+      }
+      return { queued, skipped }
+    },
+    onSuccess: (result) => {
+      if (result) {
+        setRetryResult(result)
+        setShowRetryConfirm(false)
+        queryClient.invalidateQueries({ queryKey: ['products'] })
+        queryClient.invalidateQueries({ queryKey: ['stats'] })
+      }
+    }
+  })
+
+  useEffect(() => {
+    setActiveStatus(status)
+  }, [status])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput)
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    setPage(1)
+  }, [limit, activeStatus])
+
   const {
-    data: products,
+    data: productsData,
     isLoading,
     error,
   } = useQuery({
-    queryKey: ['products', category, batchId, filterConfidence],
+    queryKey: ['products', category, activeStatus, batchId, filterConfidence, page, limit, debouncedSearch],
     queryFn: () => fetchProducts({ 
       category, 
+      status: activeStatus,
+      page,
+      limit,
+      search: debouncedSearch,
       batch_id: batchId,
       confidence_min: filterConfidence ? filterConfidence / 100 : undefined
     }),
@@ -59,10 +141,9 @@ export const ProductTable = ({
     },
   })
 
-  const [sorting, setSorting] = useState<SortingState>([])
-  const [globalFilter, setGlobalFilter] = useState('')
-
-  const filteredProducts = products?.items || []
+  const filteredProducts = productsData?.items || []
+  const totalPages = productsData?.pagination?.totalPages || 1
+  const totalRecords = productsData?.pagination?.total || 0
 
   const columns: ColumnDef<any>[] = [
     {
@@ -202,24 +283,11 @@ export const ProductTable = ({
     data: filteredProducts,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    onSortingChange: setSorting,
-    onGlobalFilterChange: setGlobalFilter,
-    globalFilterFn: 'auto',
-    state: {
-      sorting,
-      globalFilter,
-    },
-    initialState: {
-      pagination: {
-        pageSize: 10,
-      },
-    },
+    manualPagination: true,
+    pageCount: totalPages,
   })
 
-  if (isLoading)
+  if (isLoading && !productsData)
     return (
       <div className='p-12 flex flex-col items-center justify-center text-muted-foreground space-y-4'>
         <div className="w-8 h-8 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
@@ -235,21 +303,72 @@ export const ProductTable = ({
 
   return (
     <div className='space-y-4'>
-      <div className="flex items-center justify-between">
-        <div className="relative w-72">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search by SKU or Description..."
-            value={globalFilter ?? ''}
-            onChange={(e) => setGlobalFilter(e.target.value)}
-            className="pl-9 bg-card shadow-sm"
-          />
+      {!hideControls && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="relative w-72">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search by SKU..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="pl-9 bg-card shadow-sm pr-8"
+              />
+              {searchInput && (
+                <button
+                  onClick={() => setSearchInput('')}
+                  className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {activeStatus && (
+              <Badge variant="secondary" className="flex items-center gap-1 cursor-pointer hover:bg-secondary/80" onClick={() => setActiveStatus(undefined)}>
+                Status: {activeStatus.replace(/_/g, ' ')} <X className="h-3 w-3" />
+              </Badge>
+            )}
+            {isRetryableStatus && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="shadow-sm" 
+                onClick={() => setShowRetryConfirm(true)}
+                disabled={bulkRetryMutation.isPending}
+              >
+                {bulkRetryMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                Retry All {activeStatus?.replace(/_/g, ' ')} ({totalRecords})
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+              <p>Rows per page</p>
+              <Select
+                value={`${limit}`}
+                onValueChange={(value) => {
+                  setLimit(Number(value))
+                }}
+              >
+                <SelectTrigger className="h-8 w-[70px]">
+                  <SelectValue placeholder={limit} />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {[10, 20, 50, 100].map((pageSize) => (
+                    <SelectItem key={pageSize} value={`${pageSize}`}>
+                      {pageSize}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="text-sm text-muted-foreground">
+              Showing <span className="font-medium text-foreground">{filteredProducts.length}</span> results out of <span className="font-medium text-foreground">{totalRecords}</span>
+            </div>
+          </div>
         </div>
-        <div className="text-sm text-muted-foreground">
-          Showing <span className="font-medium text-foreground">{table.getFilteredRowModel().rows.length}</span> results
-        </div>
-      </div>
+      )}
 
       <div className='rounded-lg border bg-card shadow-sm overflow-hidden'>
         <Table>
@@ -297,7 +416,7 @@ export const ProductTable = ({
                 >
                   <div className="flex flex-col items-center justify-center space-y-2">
                     <FileText className="h-8 w-8 text-muted-foreground/50" />
-                    <p>No products found matching your search.</p>
+                    <p>No products found.</p>
                   </div>
                 </TableCell>
               </TableRow>
@@ -306,34 +425,78 @@ export const ProductTable = ({
         </Table>
       </div>
 
-      <div className='flex items-center justify-between'>
-        <div className='text-sm text-muted-foreground'>
-          Page <span className="font-medium text-foreground">{table.getState().pagination.pageIndex + 1}</span> of{' '}
-          <span className="font-medium text-foreground">{table.getPageCount()}</span>
+      {!hideControls && (
+        <div className='flex items-center justify-between'>
+          <div className='text-sm text-muted-foreground'>
+            Page <span className="font-medium text-foreground">{page}</span> of{' '}
+            <span className="font-medium text-foreground">{totalPages}</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => setPage(old => Math.max(old - 1, 1))}
+              disabled={page === 1}
+              className="shadow-sm"
+            >
+              <ChevronLeft className='h-4 w-4 mr-1' />
+              Previous
+            </Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => setPage(old => (old < totalPages ? old + 1 : old))}
+              disabled={page === totalPages || totalPages === 0}
+              className="shadow-sm"
+            >
+              Next
+              <ChevronRight className='h-4 w-4 ml-1' />
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center space-x-2">
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="shadow-sm"
-          >
-            <ChevronLeft className='h-4 w-4 mr-1' />
-            Previous
-          </Button>
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="shadow-sm"
-          >
-            Next
-            <ChevronRight className='h-4 w-4 ml-1' />
-          </Button>
-        </div>
-      </div>
+      )}
+
+      <AlertDialog open={showRetryConfirm} onOpenChange={setShowRetryConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retry Pipeline</AlertDialogTitle>
+            <AlertDialogDescription>
+              Retry {totalRecords} products with status "{activeStatus?.replace(/_/g, ' ')}"?
+              This will queue all eligible products matching the current status. Products already processing will be skipped.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkRetryMutation.isPending}>Cancel</AlertDialogCancel>
+            <Button 
+              disabled={bulkRetryMutation.isPending} 
+              onClick={(e) => {
+                e.preventDefault()
+                bulkRetryMutation.mutate()
+              }}
+            >
+              {bulkRetryMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              Retry {totalRecords} Products
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!retryResult} onOpenChange={() => setRetryResult(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Retry Complete</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="flex flex-col gap-2 mt-2">
+                <div><strong>Queued:</strong> {retryResult?.queued}</div>
+                <div><strong>Skipped:</strong> {retryResult?.skipped} already processing</div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setRetryResult(null)}>Close</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

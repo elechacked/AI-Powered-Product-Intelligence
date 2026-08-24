@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import axios from 'axios'
@@ -13,6 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
+import { Search } from 'lucide-react'
 
 export const Route = createFileRoute('/_layout/logs')({
   component: LogsPage,
@@ -20,11 +22,23 @@ export const Route = createFileRoute('/_layout/logs')({
 
 function LogsPage() {
   const [selectedLog, setSelectedLog] = useState<any>(null)
+  const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(timer)
+  }, [search])
 
   const { data: logs, isLoading } = useQuery({
-    queryKey: ['llm_logs'],
+    queryKey: ['llm_logs', debouncedSearch],
     queryFn: async () => {
-      const res = await axios.get(`${API_BASE_URL}/api/stats/logs?limit=100`)
+      const url = new URL(`${API_BASE_URL}/api/stats/logs`)
+      url.searchParams.set('limit', '100')
+      if (debouncedSearch) {
+        url.searchParams.set('search', debouncedSearch)
+      }
+      const res = await axios.get(url.toString())
       return res.data
     },
     refetchInterval: 5000,
@@ -40,11 +54,23 @@ function LogsPage() {
       </Header>
       <Main>
         <div className="flex flex-col gap-6 h-full pb-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">AI Observability Logs</h1>
-            <p className="text-muted-foreground">
-              Real-time audit trail of all prompts, models, token usage, and latency. Click a row to view full payload.
-            </p>
+          <div className="flex flex-row justify-between items-end">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">AI Observability Logs</h1>
+              <p className="text-muted-foreground">
+                Real-time audit trail of all prompts, models, token usage, and latency. Click a row to view full payload.
+              </p>
+            </div>
+            <div className="relative w-72">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search by SKU..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 bg-card shadow-sm"
+              />
+            </div>
           </div>
 
           <div className="rounded-md border bg-card">
